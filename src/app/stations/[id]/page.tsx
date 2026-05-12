@@ -163,6 +163,9 @@ export default function StationDetails() {
   const [rawDownloading, setRawDownloading] = useState(false);
   const [hourlyDownloading, setHourlyDownloading] = useState(false);
 
+  // Loading state for date-range re-fetch
+  const [readingsLoading, setReadingsLoading] = useState(false);
+
   // Temporary states for dialogs
   const [tempStartDate, setTempStartDate] = useState<Date | null>(null);
   const [tempEndDate, setTempEndDate] = useState<Date | null>(null);
@@ -176,8 +179,11 @@ export default function StationDetails() {
       try {
         setLoading(true);
         
-        // Get station metadata
-        const stations = await apiClient.getStations();
+        // Fetch station metadata and initial readings in parallel
+        const [stations, readingsResponse] = await Promise.all([
+          apiClient.getStations(),
+          apiClient.getStationReadings(stationName, { limit: 1000 }),
+        ]);
         const foundStation = stations.find(s => s.station_name === stationName);
         
         if (!foundStation) {
@@ -193,11 +199,6 @@ export default function StationDetails() {
           ...foundStation.metadata.available_fields.filter(f => fieldDisplayNames[f]),
           ...computedFieldList,
         ]);
-        
-        // Get initial readings (last 7 days)
-        const readingsResponse = await apiClient.getStationReadings(stationName, {
-          limit: 1000,
-        });
         
         setReadings(readingsResponse.data);
         
@@ -247,22 +248,26 @@ export default function StationDetails() {
   
   // Handle date period apply - re-fetch from API with new date range
   const handleDateApply = async () => {
-    setStartDate(tempStartDate);
-    setEndDate(tempEndDate);
     setDateDialogOpen(false);
     
-    // Re-fetch readings from API with the selected date range
-    if (tempStartDate && tempEndDate) {
-      try {
-        const readingsResponse = await apiClient.getStationReadings(stationName, {
-          start_date: tempStartDate.toISOString(),
-          end_date: tempEndDate.toISOString(),
-          limit: 10000,
-        });
-        setReadings(readingsResponse.data);
-      } catch (err) {
-        console.error('Failed to fetch readings for date range:', err);
-      }
+    if (!tempStartDate || !tempEndDate) return;
+
+    // Show spinner; keep old chart visible until new data arrives
+    setReadingsLoading(true);
+    try {
+      const readingsResponse = await apiClient.getStationReadings(stationName, {
+        start_date: tempStartDate.toISOString(),
+        end_date: tempEndDate.toISOString(),
+        limit: 10000,
+      });
+      // Update dates and data together so the chart never shows mismatched "0 readings"
+      setReadings(readingsResponse.data);
+      setStartDate(tempStartDate);
+      setEndDate(tempEndDate);
+    } catch (err) {
+      console.error('Failed to fetch readings for date range:', err);
+    } finally {
+      setReadingsLoading(false);
     }
   };
   
@@ -846,7 +851,14 @@ export default function StationDetails() {
       </Paper>
       </motion.div>
       
-      {startDate && endDate && selectedParameters.length > 0 && (
+      {readingsLoading && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 320, gap: 2 }}>
+          <CircularProgress size={36} />
+          <Typography color="text.secondary">Loading readings…</Typography>
+        </Box>
+      )}
+
+      {!readingsLoading && startDate && endDate && selectedParameters.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
