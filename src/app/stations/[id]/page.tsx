@@ -61,6 +61,7 @@ const fieldDisplayNames: Record<string, string> = {
   energy: 'Energy',
   incremental_energy_kWh: 'Incremental Energy',
   pump_status: 'Pump Status',
+  harvesting_efficiency: 'Harvesting Efficiency',
 };
 
 // Units for each field — shown on chart Y-axis labels and tooltips
@@ -85,6 +86,7 @@ const fieldUnits: Record<string, string> = {
   energy: 'kWh',
   incremental_energy_kWh: 'kWh',
   pump_status: '',
+  harvesting_efficiency: '%',
 };
 
 // Computed fields — derived client-side from base readings
@@ -94,7 +96,11 @@ const COMPUTED_FIELDS = new Set([
   'accumulated_water_L',
   'incremental_water_g',
   'incremental_energy_kWh',
+  'harvesting_efficiency',
 ]);
+
+// AWH device duct cross-sectional area (m²) — from hardware spec (273.60 sq in = 0.18 m²)
+const AWH_DUCT_AREA_M2 = 0.18;
 
 // Field categories for grouping
 const fieldCategories: Record<string, string> = {
@@ -112,6 +118,7 @@ const fieldCategories: Record<string, string> = {
   weight: 'Water Production',
   accumulated_water_L: 'Water Production',
   incremental_water_g: 'Water Production',
+  harvesting_efficiency: 'Efficiency',
   power: 'Power Consumption',
   voltage: 'Power Consumption',
   current: 'Power Consumption',
@@ -326,6 +333,13 @@ export default function StationDetails() {
         categories['Water Production'].push('accumulated_water_L');
     }
 
+    // Add harvesting efficiency when intake humidity + velocity are available
+    if (availableFields.includes('temperature') && availableFields.includes('humidity') && availableFields.includes('velocity') && availableFields.includes('weight')) {
+      if (!categories['Efficiency']) categories['Efficiency'] = [];
+      if (!categories['Efficiency'].includes('harvesting_efficiency'))
+        categories['Efficiency'].push('harvesting_efficiency');
+    }
+
     return categories;
   }, [availableFields]);
 
@@ -392,6 +406,42 @@ export default function StationDetails() {
       }
     });
 
+    // Pre-compute incremental water (g) per reading for harvesting efficiency
+    const incWaterMap = new Map<string, number>();
+    let prevWeff: number | null = null;
+    filteredReadings.forEach(r => {
+      const w = typeof r.weight === 'number' ? r.weight : null;
+      if (w !== null) {
+        incWaterMap.set(r.timestamp, prevWeff !== null ? Math.max(w - prevWeff, 0) : 0);
+        prevWeff = w;
+      } else {
+        incWaterMap.set(r.timestamp, 0);
+      }
+    });
+
+    // Pre-compute harvesting efficiency (%) per reading
+    // Formula: (incremental_water_g/1000) / (abs_humidity × (velocity/3.6) × DUCT_AREA × Δt_s / 1000) × 100
+    // = incremental_water_g / (abs_humidity × (velocity/3.6) × DUCT_AREA × Δt_s) × 100
+    const effMap = new Map<string, number>();
+    filteredReadings.forEach((r, i) => {
+      const absH = typeof r.temperature === 'number' && typeof r.humidity === 'number'
+        ? computeAbsHumidity(r.temperature, r.humidity) : null;
+      const vel = typeof r.velocity === 'number' ? r.velocity : null;
+      const incW = incWaterMap.get(r.timestamp) ?? 0;
+      if (absH !== null && vel !== null && absH > 0 && vel > 0) {
+        // Δt: use actual gap between readings, fallback 30s
+        const dtMs = i > 0
+          ? new Date(r.timestamp).getTime() - new Date(filteredReadings[i - 1].timestamp).getTime()
+          : 30000;
+        const dtS = Math.min(dtMs / 1000, 120); // cap at 2 min to avoid gaps inflating result
+        const intakeWaterG = absH * (vel / 3.6) * AWH_DUCT_AREA_M2 * dtS;
+        const eff = intakeWaterG > 0 ? Math.min((incW / intakeWaterG) * 100, 100) : 0;
+        effMap.set(r.timestamp, Math.round(eff * 10000) / 10000);
+      } else {
+        effMap.set(r.timestamp, 0);
+      }
+    });
+
     // Helper: resolve a field value, computing derived fields on the fly if needed
     const resolveValue = (reading: StationReading, field: string): number => {
       if (field === 'abs_humidity_intake') {
@@ -405,8 +455,14 @@ export default function StationDetails() {
       if (field === 'accumulated_water_L') {
         return accWaterMap.get(reading.timestamp) ?? 0;
       }
+      if (field === 'incremental_water_g') {
+        return incWaterMap.get(reading.timestamp) ?? 0;
+      }
       if (field === 'incremental_energy_kWh') {
         return incEnergyMap.get(reading.timestamp) ?? 0;
+      }
+      if (field === 'harvesting_efficiency') {
+        return effMap.get(reading.timestamp) ?? 0;
       }
       if (field === 'energy') {
         return typeof reading.energy === 'number' ? reading.energy / 1000 : 0;
@@ -959,13 +1015,16 @@ export default function StationDetails() {
                       let accumulatedWaterG = 0;
                       let prevWeight: number | null = null;
                       let prevEnergy: number | null = null;
+                      let prevTimestamp: string | null = null;
 
                       const enriched = sorted.map(r => {
                         const row: Record<string, unknown> = { ...r };
 
                         // Absolute humidity (intake)
+                        let absHIn: number | null = null;
                         if (typeof r.temperature === 'number' && typeof r.humidity === 'number') {
-                          row.abs_humidity_intake = absHumidity(r.temperature, r.humidity);
+                          absHIn = absHumidity(r.temperature, r.humidity);
+                          row.abs_humidity_intake = absHIn;
                         }
                         // Absolute humidity (outtake)
                         if (typeof r.outtake_temperature === 'number' && typeof r.outtake_humidity === 'number') {
@@ -973,10 +1032,11 @@ export default function StationDetails() {
                         }
                         // Incremental water (only positive deltas — never subtract)
                         const w = r.weight as number | null | undefined;
+                        let incWG = 0;
                         if (typeof w === 'number') {
-                          const incr = prevWeight !== null ? Math.max(w - prevWeight, 0) : 0;
-                          row.incremental_water_g = incr;
-                          accumulatedWaterG += incr;
+                          incWG = prevWeight !== null ? Math.max(w - prevWeight, 0) : 0;
+                          row.incremental_water_g = incWG;
+                          accumulatedWaterG += incWG;
                           row.accumulated_water_L = Math.round(accumulatedWaterG / 1000 * 1000000) / 1000000;
                           prevWeight = w;
                         }
@@ -987,6 +1047,19 @@ export default function StationDetails() {
                           row.incremental_energy_kWh = prevEnergy !== null ? Math.round(Math.max(e - prevEnergy, 0) / 1000 * 1000000) / 1000000 : 0;
                           prevEnergy = e;
                         }
+                        // Harvesting efficiency
+                        const vel = r.velocity as number | null | undefined;
+                        if (absHIn !== null && typeof vel === 'number' && absHIn > 0 && vel > 0) {
+                          const dtMs = prevTimestamp ? new Date(r.timestamp).getTime() - new Date(prevTimestamp).getTime() : 30000;
+                          const dtS = Math.min(dtMs / 1000, 120);
+                          const intakeG = absHIn * (vel / 3.6) * AWH_DUCT_AREA_M2 * dtS;
+                          row.harvesting_efficiency = intakeG > 0
+                            ? Math.round(Math.min((incWG / intakeG) * 100, 100) * 10000) / 10000
+                            : 0;
+                        } else {
+                          row.harvesting_efficiency = 0;
+                        }
+                        prevTimestamp = r.timestamp;
 
                         return row;
                       });
