@@ -854,7 +854,7 @@ export default function StationDetails() {
         >
           <FeaturePlot
             data={chartData}
-            feature={`${selectedCategory} - ${selectedParameters.join(', ')}` as FeatureType}
+            feature={`${selectedCategory} - ${selectedParameters.map(p => fieldDisplayNames[p] || p).join(', ')}` as FeatureType}
             startDate={format(startDate, 'yyyy-MM-dd')}
             endDate={format(endDate, 'yyyy-MM-dd')}
             paramNames={selectedParameters.map(p => fieldDisplayNames[p] || p)}
