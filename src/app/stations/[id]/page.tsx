@@ -1210,6 +1210,9 @@ export default function StationDetails() {
                         'Abs Humidity Outtake Std': row.abs_humidity_outtake_std,
                         'Water Produced (g)': row.water_produced_g,
                         'Water Produced (L)': row.water_produced_L,
+                        'Intake Available Water (g/hr)': row.intake_available_water_g_hourly,
+                        'Captured Water (g/hr)': row.water_captured_g_hourly,
+                        'Harvesting Efficiency Hourly (%)': row.harvesting_efficiency_pct_hourly,
                         'Energy Consumed (kWh)': row.energy_consumed_kWh,
                         'Energy per Liter (kWh/L)': row.energy_per_liter_kWh_L,
                       }));

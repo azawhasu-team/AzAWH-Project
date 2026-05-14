@@ -243,6 +243,9 @@ export interface HourlyDataRow {
   water_produced_L: number | null;
   energy_consumed_kWh: number | null;
   energy_per_liter_kWh_L: number | null;
+  intake_available_water_g_hourly?: number | null;
+  water_captured_g_hourly?: number | null;
+  harvesting_efficiency_pct_hourly?: number | null;
 }
 
 export interface HourlyAggregationResponse {
