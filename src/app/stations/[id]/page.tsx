@@ -172,6 +172,8 @@ export default function StationDetails() {
   const [rawDownloadFields, setRawDownloadFields] = useState<string[]>([]);
   const [rawDownloading, setRawDownloading] = useState(false);
   const [hourlyDownloading, setHourlyDownloading] = useState(false);
+  const [hourlyEfficiencyLoading, setHourlyEfficiencyLoading] = useState(false);
+  const [hourlyEfficiencyData, setHourlyEfficiencyData] = useState<ChartDataPoint[]>([]);
 
   // Loading state for date-range re-fetch
   const [readingsLoading, setReadingsLoading] = useState(false);
@@ -508,6 +510,50 @@ export default function StationDetails() {
       return readingDate >= start && readingDate <= end;
     });
   }, [startDate, endDate, readings]);
+
+  // Fetch hourly harvesting efficiency series for charting
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchHourlyEfficiency() {
+      if (!startDate || !endDate) {
+        setHourlyEfficiencyData([]);
+        return;
+      }
+
+      setHourlyEfficiencyLoading(true);
+      try {
+        const resp = await apiClient.getHourlyAggregation(stationName, {
+          start_date: startDate.toISOString(),
+          end_date: endDate.toISOString(),
+        });
+
+        if (cancelled) return;
+
+        const points: ChartDataPoint[] = (resp.data || [])
+          .filter(r => typeof r.harvesting_efficiency_pct_hourly === 'number')
+          .map(r => ({
+            date: r.hour,
+            value: r.harvesting_efficiency_pct_hourly ?? 0,
+          }));
+
+        setHourlyEfficiencyData(points);
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Failed to fetch hourly harvesting efficiency:', err);
+          setHourlyEfficiencyData([]);
+        }
+      } finally {
+        if (!cancelled) setHourlyEfficiencyLoading(false);
+      }
+    }
+
+    fetchHourlyEfficiency();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stationName, startDate, endDate]);
   
   const handleBack = () => {
     router.push('/');
@@ -883,6 +929,30 @@ export default function StationDetails() {
             paramNames={selectedParameters.map(p => fieldDisplayNames[p] || p)}
             paramUnits={selectedParameters.map(p => fieldUnits[p] || '')}
           />
+        </motion.div>
+      )}
+
+      {!readingsLoading && startDate && endDate && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.35 }}
+        >
+          {hourlyEfficiencyLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 280, gap: 2 }}>
+              <CircularProgress size={32} />
+              <Typography color="text.secondary">Loading hourly harvesting efficiency…</Typography>
+            </Box>
+          ) : (
+            <FeaturePlot
+              data={hourlyEfficiencyData}
+              feature={'Efficiency - Harvesting Efficiency (Hourly)' as FeatureType}
+              startDate={format(startDate, 'yyyy-MM-dd')}
+              endDate={format(endDate, 'yyyy-MM-dd')}
+              paramNames={['Harvesting Efficiency (Hourly)']}
+              paramUnits={['%']}
+            />
+          )}
         </motion.div>
       )}
       
