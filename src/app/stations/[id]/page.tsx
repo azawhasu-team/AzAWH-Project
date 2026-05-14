@@ -39,6 +39,16 @@ function computeAbsHumidity(tempC: number, rhPct: number): number {
   return (216.7 * (rhPct / 100) * es) / (273.15 + tempC);
 }
 
+// Normalize anemometer velocity to m/s before using it in physical formulas.
+function velocityToMps(velocity: number, unit?: string | null): number {
+  const u = (unit || '').toLowerCase();
+  if (u === 'km/h') return velocity / 3.6;
+  if (u === 'mph') return velocity / 2.23694;
+  if (u === 'ft/s') return velocity / 3.28084;
+  if (u === 'ft/m') return velocity / 196.850394;
+  return velocity; // default and 'm/s'
+}
+
 // Field mapping: API field names to display names
 const fieldDisplayNames: Record<string, string> = {
   temperature: 'Temperature (Intake)',
@@ -425,8 +435,8 @@ export default function StationDetails() {
     });
 
     // Pre-compute harvesting efficiency (%) per reading
-    // Formula: (incremental_water_g/1000) / (abs_humidity × (velocity/3.6) × DUCT_AREA × Δt_s / 1000) × 100
-    // = incremental_water_g / (abs_humidity × (velocity/3.6) × DUCT_AREA × Δt_s) × 100
+    // Formula: (incremental_water_g/1000) / (abs_humidity × velocity_mps × DUCT_AREA × Δt_s / 1000) × 100
+    // = incremental_water_g / (abs_humidity × velocity_mps × DUCT_AREA × Δt_s) × 100
     const effMap = new Map<string, number>();
     filteredReadings.forEach((r, i) => {
       const absH = typeof r.temperature === 'number' && typeof r.humidity === 'number'
@@ -439,7 +449,8 @@ export default function StationDetails() {
           ? new Date(r.timestamp).getTime() - new Date(filteredReadings[i - 1].timestamp).getTime()
           : 30000;
         const dtS = Math.min(dtMs / 1000, 120); // cap at 2 min to avoid gaps inflating result
-        const intakeWaterG = absH * (vel / 3.6) * AWH_DUCT_AREA_M2 * dtS;
+        const velMps = velocityToMps(vel, r.unit);
+        const intakeWaterG = absH * velMps * AWH_DUCT_AREA_M2 * dtS;
         const eff = intakeWaterG > 0 ? Math.min((incW / intakeWaterG) * 100, 100) : 0;
         effMap.set(r.timestamp, Math.round(eff * 10000) / 10000);
       } else {
@@ -1064,7 +1075,8 @@ export default function StationDetails() {
                         if (absHIn !== null && typeof vel === 'number' && absHIn > 0 && vel > 0) {
                           const dtMs = prevTimestamp ? new Date(r.timestamp).getTime() - new Date(prevTimestamp).getTime() : 30000;
                           const dtS = Math.min(dtMs / 1000, 120);
-                          const intakeG = absHIn * (vel / 3.6) * AWH_DUCT_AREA_M2 * dtS;
+                          const velMps = velocityToMps(vel, r.unit);
+                          const intakeG = absHIn * velMps * AWH_DUCT_AREA_M2 * dtS;
                           row.harvesting_efficiency = intakeG > 0
                             ? Math.round(Math.min((incWG / intakeG) * 100, 100) * 10000) / 10000
                             : 0;
