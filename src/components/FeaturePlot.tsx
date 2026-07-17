@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import { Box, Typography, Paper } from '@mui/material';
 import { FeatureType, ChartDataPoint } from '@/types';
+import { formatPhoenixTime, formatPhoenixFullDateTime, phoenixDateKey } from '@/lib/timezone';
 
 interface FeaturePlotProps {
   data: ChartDataPoint[];
@@ -38,12 +39,12 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
     return data.filter((_, i) => i % step === 0 || i === data.length - 1);
   }, [data]);
 
-  // Determine if data spans multiple days to choose date vs time formatting
+  // Determine if data spans multiple days (in Phoenix time) to choose date vs time formatting
   const spansMultipleDays = React.useMemo(() => {
     if (plotData.length < 2) return false;
     const first = new Date(plotData[0].date);
     const last = new Date(plotData[plotData.length - 1].date);
-    return first.toDateString() !== last.toDateString();
+    return phoenixDateKey(first) !== phoenixDateKey(last);
   }, [plotData]);
 
   // Compute tick interval: aim for ~10-15 ticks on x-axis
@@ -87,19 +88,19 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
-    const time = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+    const time = formatPhoenixTime(date);
     if (spansMultipleDays) {
-      return `${date.getMonth() + 1}/${date.getDate()} ${time}`;
+      const monthDay = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Phoenix',
+        month: 'numeric',
+        day: 'numeric',
+      }).format(date);
+      return `${monthDay} ${time}`;
     }
     return time;
   };
 
-  const formatTooltipLabel = (label: string) => {
-    const date = new Date(label);
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    return `${days[date.getDay()]}, ${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-  };
+  const formatTooltipLabel = (label: string) => formatPhoenixFullDateTime(new Date(label));
 
   return (
     <Paper

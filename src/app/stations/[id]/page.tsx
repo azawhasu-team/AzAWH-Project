@@ -31,6 +31,7 @@ import { format } from 'date-fns';
 import FeaturePlot from '@/components/FeaturePlot';
 import Papa from 'papaparse';
 import { apiClient, type StationInfo, type StationReading, type ReadingsResponse, type HourlyAggregationResponse } from '@/lib/api-client';
+import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 import { FeatureType, ChartDataPoint, StationData } from '@/types';
 
 // Magnus formula helper for absolute humidity (g/m³)
@@ -718,7 +719,7 @@ export default function StationDetails() {
               <Box>
                 <Typography variant="body2" sx={{ opacity: 0.8 }}>Last Updated</Typography>
                 <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                  {station.metadata.last_reading ? format(new Date(station.metadata.last_reading), 'MMM dd, HH:mm') : 'N/A'}
+                  {station.metadata.last_reading ? formatPhoenixMonthDayTime(new Date(station.metadata.last_reading)) : 'N/A'}
                 </Typography>
               </Box>
             </Box>
