@@ -2,6 +2,7 @@
 
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Image from 'next/image';
 import {
   Box,
   Card,
@@ -79,7 +80,7 @@ function LoginForm() {
             mb: 1,
           }}
         >
-          <img src="/asu_logo.png" alt="ASU Logo" style={{ height: 48, width: 'auto' }} />
+          <Image src="/asu_logo.png" alt="AzAWH Logo" width={56} height={56} priority />
           <Typography
             variant="h5"
             sx={{ fontWeight: 700, color: 'primary.main', letterSpacing: '0.05em' }}
