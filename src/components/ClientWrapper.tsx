@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { usePathname } from 'next/navigation';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { Container, Box } from '@mui/material';
@@ -100,24 +101,31 @@ interface ClientWrapperProps {
 }
 
 const ClientWrapper: React.FC<ClientWrapperProps> = ({ children }) => {
+  const pathname = usePathname();
+  const isLoginPage = pathname === '/login';
+
   return (
     <ThemeProvider theme={theme}>
       <LocalizationProvider dateAdapter={AdapterDateFns}>
         <CssBaseline />
-        <Box
-          suppressHydrationWarning
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            minHeight: '100vh',
-          }}
-        >
-          <Header />
-          <Box sx={{ flex: 1 }}>
-            {children}
+        {isLoginPage ? (
+          children
+        ) : (
+          <Box
+            suppressHydrationWarning
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: '100vh',
+            }}
+          >
+            <Header />
+            <Box sx={{ flex: 1 }}>
+              {children}
+            </Box>
+            <Footer />
           </Box>
-          <Footer />
-        </Box>
+        )}
       </LocalizationProvider>
     </ThemeProvider>
   );

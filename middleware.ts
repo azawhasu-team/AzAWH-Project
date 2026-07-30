@@ -1,23 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { AUTH_COOKIE, expectedSessionToken } from './src/lib/auth';
 
-export function middleware(request: NextRequest) {
-  const authHeader = request.headers.get('authorization');
+export async function middleware(request: NextRequest) {
+  const token = request.cookies.get(AUTH_COOKIE)?.value;
+  const expected = await expectedSessionToken();
 
-  if (authHeader) {
-    const [, encoded] = authHeader.split(' ');
-    const [user, pwd] = atob(encoded).split(':');
-
-    if (user === process.env.DASHBOARD_USER && pwd === process.env.DASHBOARD_PASSWORD) {
-      return NextResponse.next();
-    }
+  if (token && token === expected) {
+    return NextResponse.next();
   }
 
-  return new NextResponse('Authentication required', {
-    status: 401,
-    headers: { 'WWW-Authenticate': 'Basic realm="AzAWH Dashboard"' },
-  });
+  const loginUrl = new URL('/login', request.url);
+  loginUrl.searchParams.set('from', request.nextUrl.pathname);
+  return NextResponse.redirect(loginUrl);
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|login|api/login).*)'],
 };

@@ -2,8 +2,17 @@
 
 import { AppBar, Toolbar, Box, Typography, Button, Link as MuiLink } from '@mui/material';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 export default function Header() {
+  const router = useRouter();
+
+  const handleSignOut = async () => {
+    await fetch('/api/logout', { method: 'POST' });
+    router.push('/login');
+    router.refresh();
+  };
+
   return (
     <AppBar
       position="static"
@@ -136,6 +145,24 @@ export default function Header() {
               Visit Website
             </Button>
           </MuiLink>
+
+          <Button
+            onClick={handleSignOut}
+            size="small"
+            sx={{
+              ml: { xs: 0, md: 1 },
+              color: 'text.secondary',
+              textTransform: 'none',
+              fontSize: { xs: '0.75rem', md: '0.875rem' },
+              fontWeight: 600,
+              '&:hover': {
+                backgroundColor: 'rgba(144, 19, 64, 0.08)',
+                color: 'primary.main',
+              },
+            }}
+          >
+            Sign Out
+          </Button>
         </Box>
       </Toolbar>
     </AppBar>
