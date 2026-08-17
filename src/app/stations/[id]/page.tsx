@@ -14,6 +14,7 @@ import {
   MenuItem,
   CircularProgress,
   Alert,
+  Snackbar,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -173,6 +174,7 @@ export default function StationDetails() {
   const [rawDownloadFields, setRawDownloadFields] = useState<string[]>([]);
   const [rawDownloading, setRawDownloading] = useState(false);
   const [hourlyDownloading, setHourlyDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [hourlyEfficiencyLoading, setHourlyEfficiencyLoading] = useState(false);
   const [hourlyEfficiencyData, setHourlyEfficiencyData] = useState<ChartDataPoint[]>([]);
 
@@ -1178,6 +1180,11 @@ export default function StationDetails() {
                       link.click();
                     } catch (err) {
                       console.error('Raw download failed:', err);
+                      setDownloadError(
+                        err instanceof Error
+                          ? `Raw data download failed: ${err.message}`
+                          : 'Raw data download failed. Please try again or narrow the date range.'
+                      );
                     } finally {
                       setRawDownloading(false);
                     }
@@ -1295,6 +1302,11 @@ export default function StationDetails() {
                       link.click();
                     } catch (err) {
                       console.error('Hourly download failed:', err);
+                      setDownloadError(
+                        err instanceof Error
+                          ? `Hourly data download failed: ${err.message}`
+                          : 'Hourly data download failed. Please try again or narrow the date range.'
+                      );
                     } finally {
                       setHourlyDownloading(false);
                     }
@@ -1694,6 +1706,17 @@ export default function StationDetails() {
       </Dialog>
         )}
       </AnimatePresence>
+
+      <Snackbar
+        open={!!downloadError}
+        autoHideDuration={8000}
+        onClose={() => setDownloadError(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setDownloadError(null)} severity="error" sx={{ width: '100%' }}>
+          {downloadError}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }
