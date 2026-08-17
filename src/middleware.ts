@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AUTH_COOKIE, expectedSessionToken } from './src/lib/auth';
+import { AUTH_COOKIE, verifySessionToken } from './lib/auth';
 
 export async function middleware(request: NextRequest) {
   const token = request.cookies.get(AUTH_COOKIE)?.value;
-  const expected = await expectedSessionToken();
 
-  if (token && token === expected) {
+  if (await verifySessionToken(token)) {
     return NextResponse.next();
   }
 
