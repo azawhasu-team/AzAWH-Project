@@ -82,17 +82,23 @@ class APIClient {
   }
 
   /**
-   * Generic fetch wrapper with error handling
+   * Generic fetch wrapper with error handling. `timeoutMs`, when given, hard-aborts
+   * the request via AbortController — some backend queries here (wide-date-range
+   * Firestore reads) can otherwise hang far longer than any reasonable UI wait.
    */
   private async fetch<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    timeoutMs?: number
   ): Promise<T> {
     const url = `${this.baseURL}${endpoint}`;
-    
+    const controller = timeoutMs ? new AbortController() : undefined;
+    const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+
     try {
       const response = await fetch(url, {
         ...options,
+        signal: controller?.signal,
         headers: {
           'Content-Type': 'application/json',
           ...options.headers,
@@ -108,10 +114,15 @@ class APIClient {
 
       return await response.json();
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error('Request timed out');
+      }
       if (error instanceof Error) {
         throw new Error(`API Error: ${error.message}`);
       }
       throw new Error('Unknown API error occurred');
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
   }
 
@@ -134,10 +145,11 @@ class APIClient {
    */
   async getStationReadings(
     stationName: string,
-    params?: ReadingsQueryParams
+    params?: ReadingsQueryParams,
+    timeoutMs?: number
   ): Promise<ReadingsResponse> {
     const queryParams = new URLSearchParams();
-    
+
     if (params?.start_date) queryParams.append('start_date', params.start_date);
     if (params?.end_date) queryParams.append('end_date', params.end_date);
     if (params?.fields?.length) queryParams.append('fields', params.fields.join(','));
@@ -147,7 +159,7 @@ class APIClient {
     const query = queryParams.toString();
     const endpoint = `/stations/${encodeURIComponent(stationName)}/readings${query ? `?${query}` : ''}`;
 
-    return this.fetch<ReadingsResponse>(endpoint);
+    return this.fetch<ReadingsResponse>(endpoint, {}, timeoutMs);
   }
 
   /**
@@ -164,19 +176,30 @@ class APIClient {
    * a shallow one. Requires `params.start_date` to be set (ASCENDING order);
    * without it, only a single page is fetched.
    *
-   * Each individual page can itself take 30-60s+ on this backend (Firestore
+   * Each individual page can itself take 30-90s+ on this backend (Firestore
    * streams 10,000 docs one at a time — that's the real bottleneck, not the
-   * pagination strategy), so `maxDurationMs` exists as a hard ceiling on
-   * total wait rather than relying on `maxRows` alone: a very wide, dense
-   * range could otherwise take several minutes to hit the row cap.
+   * pagination strategy), and can occasionally run far longer under load.
+   * `maxDurationMs` bounds total wait *between* completed pages, but that
+   * alone can't help if a single page — including the first — just hangs;
+   * `pageTimeoutMs` hard-aborts any individual page that takes too long.
+   * If that happens after some data has already been gathered, what's been
+   * loaded so far is kept (marked truncated) rather than thrown away; if it
+   * happens on the very first page, the error is surfaced to the caller
+   * instead of returning a misleading empty result.
    */
   async getAllStationReadings(
     stationName: string,
     params?: Omit<ReadingsQueryParams, 'offset'>,
-    options?: { maxRows?: number; maxDurationMs?: number; onProgress?: (rowsSoFar: number) => void }
+    options?: {
+      maxRows?: number;
+      maxDurationMs?: number;
+      pageTimeoutMs?: number;
+      onProgress?: (rowsSoFar: number) => void;
+    }
   ): Promise<{ data: StationReading[]; truncated: boolean }> {
     const maxRows = options?.maxRows ?? 50000;
     const maxDurationMs = options?.maxDurationMs ?? 90000;
+    const pageTimeoutMs = options?.pageTimeoutMs ?? 120000;
     const pageSize = params?.limit && params.limit < 10000 ? params.limit : 10000;
     const startedAt = Date.now();
     const all: StationReading[] = [];
@@ -184,11 +207,22 @@ class APIClient {
     let cursorStartDate = params?.start_date;
 
     while (true) {
-      const page = await this.getStationReadings(stationName, {
-        ...params,
-        start_date: cursorStartDate,
-        limit: pageSize,
-      });
+      let page: ReadingsResponse;
+      try {
+        page = await this.getStationReadings(
+          stationName,
+          { ...params, start_date: cursorStartDate, limit: pageSize },
+          pageTimeoutMs
+        );
+      } catch (err) {
+        if (all.length > 0) {
+          // Already have some data — treat a stuck/failed later page like hitting
+          // the cap rather than discarding everything already loaded.
+          truncated = true;
+          break;
+        }
+        throw err; // nothing loaded yet — let the caller show a real error
+      }
       all.push(...page.data);
       options?.onProgress?.(all.length);
 
