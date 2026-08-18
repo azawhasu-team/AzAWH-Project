@@ -146,8 +146,44 @@ class APIClient {
 
     const query = queryParams.toString();
     const endpoint = `/stations/${encodeURIComponent(stationName)}/readings${query ? `?${query}` : ''}`;
-    
+
     return this.fetch<ReadingsResponse>(endpoint);
+  }
+
+  /**
+   * Get ALL readings for a station across a date range, paginating past the
+   * backend's single-page cap (10,000 rows — which for a busy station can be
+   * under two days of data) until the full range is covered or `maxRows` is
+   * hit. A single getStationReadings() call silently truncates to the first
+   * page; callers that need to plot or export a complete range should use
+   * this instead.
+   */
+  async getAllStationReadings(
+    stationName: string,
+    params?: Omit<ReadingsQueryParams, 'offset'>,
+    maxRows: number = 50000
+  ): Promise<{ data: StationReading[]; truncated: boolean }> {
+    const pageSize = params?.limit && params.limit < 10000 ? params.limit : 10000;
+    let offset = 0;
+    const all: StationReading[] = [];
+    let truncated = false;
+
+    while (true) {
+      const page = await this.getStationReadings(stationName, {
+        ...params,
+        limit: pageSize,
+        offset,
+      });
+      all.push(...page.data);
+      if (page.data.length < pageSize) break;
+      if (all.length >= maxRows) {
+        truncated = true;
+        break;
+      }
+      offset += pageSize;
+    }
+
+    return { data: all, truncated };
   }
 
   /**

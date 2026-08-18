@@ -175,6 +175,8 @@ export default function StationDetails() {
   const [rawDownloading, setRawDownloading] = useState(false);
   const [hourlyDownloading, setHourlyDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadWarning, setDownloadWarning] = useState<string | null>(null);
+  const [rangeTruncated, setRangeTruncated] = useState(false);
   const [hourlyEfficiencyLoading, setHourlyEfficiencyLoading] = useState(false);
   const [hourlyEfficiencyData, setHourlyEfficiencyData] = useState<ChartDataPoint[]>([]);
 
@@ -270,17 +272,22 @@ export default function StationDetails() {
     // Show spinner; keep old chart visible until new data arrives
     setReadingsLoading(true);
     try {
-      const readingsResponse = await apiClient.getStationReadings(stationName, {
+      const { data, truncated } = await apiClient.getAllStationReadings(stationName, {
         start_date: tempStartDate.toISOString(),
         end_date: tempEndDate.toISOString(),
-        limit: 10000,
       });
       // Update dates and data together so the chart never shows mismatched "0 readings"
-      setReadings(readingsResponse.data);
+      setReadings(data);
       setStartDate(tempStartDate);
       setEndDate(tempEndDate);
+      setRangeTruncated(truncated);
     } catch (err) {
       console.error('Failed to fetch readings for date range:', err);
+      setDownloadError(
+        err instanceof Error
+          ? `Couldn't load readings for that date range: ${err.message}`
+          : "Couldn't load readings for that date range. Please try again."
+      );
     } finally {
       setReadingsLoading(false);
     }
@@ -918,6 +925,13 @@ export default function StationDetails() {
         </Box>
       )}
 
+      {!readingsLoading && rangeTruncated && (
+        <Alert severity="warning" sx={{ mt: 2, borderRadius: 2 }}>
+          The selected date range has more readings than could be loaded at once — showing only
+          the earliest part of the range. Pick a narrower date range to see the rest.
+        </Alert>
+      )}
+
       {!readingsLoading && startDate && endDate && selectedParameters.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -1089,15 +1103,23 @@ export default function StationDetails() {
                         ? [...new Set([...selectedRaw, ...COMPUTE_DEPS])]
                         : selectedRaw;
 
-                      const resp = await apiClient.getStationReadings(stationName, {
-                        start_date: startDate!.toISOString(),
-                        end_date: endDate!.toISOString(),
-                        fields: fieldsToFetch,
-                        limit: 10000,
-                      });
+                      const { data: rawRows, truncated } = await apiClient.getAllStationReadings(
+                        stationName,
+                        {
+                          start_date: startDate!.toISOString(),
+                          end_date: endDate!.toISOString(),
+                          fields: fieldsToFetch,
+                        },
+                        200000
+                      );
+                      if (truncated) {
+                        setDownloadWarning(
+                          'The selected date range had more readings than could be exported at once — the downloaded CSV only covers the earliest part of the range. Pick a narrower date range for the rest.'
+                        );
+                      }
 
                       // Sort ascending for temporal computations
-                      const sorted = [...resp.data].sort((a, b) =>
+                      const sorted = [...rawRows].sort((a, b) =>
                         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
                       );
 
@@ -1715,6 +1737,17 @@ export default function StationDetails() {
       >
         <Alert onClose={() => setDownloadError(null)} severity="error" sx={{ width: '100%' }}>
           {downloadError}
+        </Alert>
+      </Snackbar>
+
+      <Snackbar
+        open={!!downloadWarning}
+        autoHideDuration={10000}
+        onClose={() => setDownloadWarning(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setDownloadWarning(null)} severity="warning" sx={{ width: '100%' }}>
+          {downloadWarning}
         </Alert>
       </Snackbar>
     </Box>
