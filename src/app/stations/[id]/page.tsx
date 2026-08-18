@@ -177,6 +177,7 @@ export default function StationDetails() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadWarning, setDownloadWarning] = useState<string | null>(null);
   const [rangeTruncated, setRangeTruncated] = useState(false);
+  const [readingsLoadedSoFar, setReadingsLoadedSoFar] = useState(0);
   const [hourlyEfficiencyLoading, setHourlyEfficiencyLoading] = useState(false);
   const [hourlyEfficiencyData, setHourlyEfficiencyData] = useState<ChartDataPoint[]>([]);
 
@@ -271,11 +272,16 @@ export default function StationDetails() {
 
     // Show spinner; keep old chart visible until new data arrives
     setReadingsLoading(true);
+    setReadingsLoadedSoFar(0);
     try {
-      const { data, truncated } = await apiClient.getAllStationReadings(stationName, {
-        start_date: tempStartDate.toISOString(),
-        end_date: tempEndDate.toISOString(),
-      });
+      const { data, truncated } = await apiClient.getAllStationReadings(
+        stationName,
+        {
+          start_date: tempStartDate.toISOString(),
+          end_date: tempEndDate.toISOString(),
+        },
+        { onProgress: setReadingsLoadedSoFar }
+      );
       // Update dates and data together so the chart never shows mismatched "0 readings"
       setReadings(data);
       setStartDate(tempStartDate);
@@ -919,9 +925,20 @@ export default function StationDetails() {
       </motion.div>
       
       {readingsLoading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 320, gap: 2 }}>
-          <CircularProgress size={36} />
-          <Typography color="text.secondary">Loading readings…</Typography>
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', height: 320, justifyContent: 'center', gap: 1.5 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <CircularProgress size={36} />
+            <Typography color="text.secondary">
+              {readingsLoadedSoFar > 0
+                ? `Loading readings… ${readingsLoadedSoFar.toLocaleString()} so far`
+                : 'Loading readings…'}
+            </Typography>
+          </Box>
+          {readingsLoadedSoFar >= 10000 && (
+            <Typography variant="caption" color="text.secondary">
+              This is a busy date range — it can take a few minutes to load in full.
+            </Typography>
+          )}
         </Box>
       )}
 
@@ -1110,7 +1127,7 @@ export default function StationDetails() {
                           end_date: endDate!.toISOString(),
                           fields: fieldsToFetch,
                         },
-                        200000
+                        { maxRows: 200000, maxDurationMs: 240000 }
                       );
                       if (truncated) {
                         setDownloadWarning(

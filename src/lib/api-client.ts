@@ -153,34 +153,54 @@ class APIClient {
   /**
    * Get ALL readings for a station across a date range, paginating past the
    * backend's single-page cap (10,000 rows — which for a busy station can be
-   * under two days of data) until the full range is covered or `maxRows` is
-   * hit. A single getStationReadings() call silently truncates to the first
-   * page; callers that need to plot or export a complete range should use
-   * this instead.
+   * under two days of data) until the full range is covered, `maxRows` is
+   * hit, or `maxDurationMs` elapses. A single getStationReadings() call
+   * silently truncates to the first page; callers that need to plot or
+   * export a complete range should use this instead.
+   *
+   * Pages advance by a `start_date` cursor (last reading's timestamp + 1ms)
+   * rather than `offset` — Firestore's offset pagination re-skips-and-discards
+   * every prior document on every page, so a deep page can be far slower than
+   * a shallow one. Requires `params.start_date` to be set (ASCENDING order);
+   * without it, only a single page is fetched.
+   *
+   * Each individual page can itself take 30-60s+ on this backend (Firestore
+   * streams 10,000 docs one at a time — that's the real bottleneck, not the
+   * pagination strategy), so `maxDurationMs` exists as a hard ceiling on
+   * total wait rather than relying on `maxRows` alone: a very wide, dense
+   * range could otherwise take several minutes to hit the row cap.
    */
   async getAllStationReadings(
     stationName: string,
     params?: Omit<ReadingsQueryParams, 'offset'>,
-    maxRows: number = 50000
+    options?: { maxRows?: number; maxDurationMs?: number; onProgress?: (rowsSoFar: number) => void }
   ): Promise<{ data: StationReading[]; truncated: boolean }> {
+    const maxRows = options?.maxRows ?? 50000;
+    const maxDurationMs = options?.maxDurationMs ?? 90000;
     const pageSize = params?.limit && params.limit < 10000 ? params.limit : 10000;
-    let offset = 0;
+    const startedAt = Date.now();
     const all: StationReading[] = [];
     let truncated = false;
+    let cursorStartDate = params?.start_date;
 
     while (true) {
       const page = await this.getStationReadings(stationName, {
         ...params,
+        start_date: cursorStartDate,
         limit: pageSize,
-        offset,
       });
       all.push(...page.data);
-      if (page.data.length < pageSize) break;
-      if (all.length >= maxRows) {
-        truncated = true;
+      options?.onProgress?.(all.length);
+
+      if (page.data.length < pageSize) break; // last page — full range covered
+      if (all.length >= maxRows || Date.now() - startedAt >= maxDurationMs || !cursorStartDate) {
+        truncated = true; // page was full, so more data likely remains beyond this cap
         break;
       }
-      offset += pageSize;
+
+      const lastTs = new Date(page.data[page.data.length - 1].timestamp);
+      lastTs.setMilliseconds(lastTs.getMilliseconds() + 1);
+      cursorStartDate = lastTs.toISOString();
     }
 
     return { data: all, truncated };
