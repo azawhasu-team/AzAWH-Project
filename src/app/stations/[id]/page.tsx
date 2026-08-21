@@ -33,6 +33,7 @@ import FeaturePlot from '@/components/FeaturePlot';
 import Papa from 'papaparse';
 import { apiClient, type StationInfo, type StationReading, type ReadingsResponse, type HourlyAggregationResponse } from '@/lib/api-client';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
+import { getStationImage } from '@/lib/stationImages';
 import { FeatureType, ChartDataPoint, StationData } from '@/types';
 
 // Magnus formula helper for absolute humidity (g/m³)
@@ -666,7 +667,7 @@ export default function StationDetails() {
           {/* Station Image */}
           <Box
             component="img"
-            src={`https://picsum.photos/600/400?random=${station.station_name}`}
+            src={getStationImage(station.station_name)}
             alt={station.station_name}
             sx={{
               width: { xs: '100%', md: '450px' },

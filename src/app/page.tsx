@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Typography, Box, Fade, Link as MuiLink, CircularProgress, Alert } from '@mui/material';
 import StationCard from '@/components/StationCard';
 import { apiClient, type StationInfo } from '@/lib/api-client';
+import { getStationImage } from '@/lib/stationImages';
 
 export default function Home() {
   const [stations, setStations] = useState<StationInfo[]>([]);
@@ -35,7 +36,7 @@ export default function Home() {
     location: station.location || 'Arizona, USA',  // Default location
     status: (station.status === 'active' ? 'Online' : 'Offline') as 'Online' | 'Offline',
     units: [station.unit],
-    image: undefined,  // Let it use default random image
+    image: getStationImage(station.station_name),
   }));
 
   if (loading) {
