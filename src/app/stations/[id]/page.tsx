@@ -185,6 +185,11 @@ export default function StationDetails() {
   // Loading state for date-range re-fetch
   const [readingsLoading, setReadingsLoading] = useState(false);
 
+  // Live status: most recent reading, polled independently of the date-range chart data
+  const [liveReading, setLiveReading] = useState<StationReading | null>(null);
+  const [liveReadingError, setLiveReadingError] = useState<string | null>(null);
+  const [liveNowTick, setLiveNowTick] = useState(Date.now());
+
   // Temporary states for dialogs
   const [tempStartDate, setTempStartDate] = useState<Date | null>(null);
   const [tempEndDate, setTempEndDate] = useState<Date | null>(null);
@@ -263,6 +268,41 @@ export default function StationDetails() {
   // Handle mounting
   React.useEffect(() => {
     setMounted(true);
+  }, []);
+
+  // Poll the single most recent reading every 30s — independent of the date-range
+  // chart data — so a field engineer can watch it advance and confirm the station
+  // is actively uploading, matching the station's own cloud-upload cadence.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchLiveReading() {
+      try {
+        const resp = await apiClient.getStationReadings(stationName, { limit: 1 });
+        if (cancelled) return;
+        if (resp.data.length > 0) {
+          setLiveReading(resp.data[0]);
+          setLiveReadingError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setLiveReadingError(err instanceof Error ? err.message : 'Failed to load live reading');
+        }
+      }
+    }
+
+    fetchLiveReading();
+    const intervalId = setInterval(fetchLiveReading, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [stationName]);
+
+  // Ticks the "X ago" freshness label between polls
+  useEffect(() => {
+    const tickId = setInterval(() => setLiveNowTick(Date.now()), 5000);
+    return () => clearInterval(tickId);
   }, []);
   
   // Handle date period apply - re-fetch from API with new date range
@@ -605,9 +645,26 @@ export default function StationDetails() {
     return null;
   }
   
-  const dateRangeString = startDate && endDate 
+  const dateRangeString = startDate && endDate
     ? `${format(startDate, 'MMM dd, yyyy')} - ${format(endDate, 'MMM dd, yyyy')}`
     : '';
+
+  // Freshness of the live reading — cloud upload cadence is ~60s, so anything
+  // past a couple minutes signals the station has actually stopped sending.
+  const liveAgeSec = liveReading
+    ? Math.max(0, Math.floor((liveNowTick - new Date(liveReading.timestamp).getTime()) / 1000))
+    : null;
+  const liveAgeLabel = liveAgeSec === null
+    ? null
+    : liveAgeSec < 60
+      ? `${liveAgeSec}s ago`
+      : liveAgeSec < 3600
+        ? `${Math.floor(liveAgeSec / 60)}m ago`
+        : `${Math.floor(liveAgeSec / 3600)}h ago`;
+  const liveStatus: 'fresh' | 'stale' | 'dead' | 'unknown' =
+    liveAgeSec === null ? 'unknown' : liveAgeSec < 120 ? 'fresh' : liveAgeSec < 600 ? 'stale' : 'dead';
+  const liveStatusColor = { fresh: '#4caf50', stale: '#ff9800', dead: '#f44336', unknown: '#9e9e9e' }[liveStatus];
+  const liveStatusText = { fresh: 'Live', stale: 'Delayed', dead: 'Not sending', unknown: 'Waiting for data' }[liveStatus];
   
   return (
     <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 4, maxWidth: '1600px', mx: 'auto' }}>
@@ -743,7 +800,100 @@ export default function StationDetails() {
         </Box>
       </Paper>
       </motion.div>
-      
+
+      {/* Live Status — most recent raw reading, polled every 30s */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.15 }}
+      >
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2.5, md: 3 },
+            mb: 4,
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 3,
+            background: 'rgba(255, 255, 255, 0.8)',
+            backdropFilter: 'blur(10px)',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.06)',
+          }}
+        >
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2.5, flexWrap: 'wrap', gap: 1 }}>
+            <Typography variant="h6" sx={{ fontWeight: 700, color: '#1e88e5', fontSize: '1.15rem' }}>
+              Live Status
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Box
+                sx={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  backgroundColor: liveStatusColor,
+                  animation: liveStatus === 'fresh' ? 'pulse 2s infinite' : 'none',
+                  '@keyframes pulse': {
+                    '0%, 100%': { opacity: 1 },
+                    '50%': { opacity: 0.4 },
+                  },
+                }}
+              />
+              <Typography variant="body2" sx={{ fontWeight: 600, color: liveStatusColor }}>
+                {liveStatusText}
+              </Typography>
+              {liveAgeLabel && (
+                <Typography variant="caption" color="text.secondary">
+                  · last reading {liveAgeLabel}
+                </Typography>
+              )}
+            </Box>
+          </Box>
+
+          {liveReadingError && !liveReading && (
+            <Alert severity="warning" sx={{ borderRadius: 2 }}>
+              Couldn&apos;t load a live reading: {liveReadingError}
+            </Alert>
+          )}
+
+          {liveReading && (
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(auto-fit, minmax(140px, 1fr))' }, gap: 2 }}>
+              {[
+                { key: 'weight', label: 'Mass Balance', value: liveReading.weight, unit: 'g' },
+                { key: 'humidity', label: 'Intake Humidity', value: liveReading.humidity, unit: '%' },
+                { key: 'outtake_humidity', label: 'Outtake Humidity', value: liveReading.outtake_humidity, unit: '%' },
+                { key: 'energy', label: 'Energy', value: typeof liveReading.energy === 'number' ? liveReading.energy / 1000 : null, unit: 'kWh' },
+                { key: 'power', label: 'Power', value: liveReading.power, unit: 'W' },
+              ]
+                .filter(f => availableFields.includes(f.key) && typeof f.value === 'number')
+                .map(f => (
+                  <Box
+                    key={f.key}
+                    sx={{
+                      p: 2,
+                      borderRadius: 2,
+                      backgroundColor: 'rgba(248, 249, 250, 0.7)',
+                      border: '1px solid rgba(222, 226, 230, 0.6)',
+                    }}
+                  >
+                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                      {f.label.toUpperCase()}
+                    </Typography>
+                    <Typography variant="h6" sx={{ fontWeight: 700, color: '#1565c0' }}>
+                      {(f.value as number).toFixed(f.unit === 'kWh' ? 3 : 1)} {f.unit}
+                    </Typography>
+                  </Box>
+                ))}
+            </Box>
+          )}
+
+          {!liveReading && !liveReadingError && (
+            <Typography variant="body2" color="text.secondary">
+              Loading live reading…
+            </Typography>
+          )}
+        </Paper>
+      </motion.div>
+
       {/* Data Analytics Section */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
