@@ -8,10 +8,6 @@ import {
   Paper,
   Chip,
   Button,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   CircularProgress,
   Alert,
   Snackbar,
@@ -31,7 +27,7 @@ import { ArrowBack, Circle as CircleIcon, CalendarMonth, Tune, Download } from '
 import { format } from 'date-fns';
 import FeaturePlot from '@/components/FeaturePlot';
 import Papa from 'papaparse';
-import { apiClient, type StationInfo, type StationReading, type ReadingsResponse, type HourlyAggregationResponse } from '@/lib/api-client';
+import { apiClient, type StationInfo, type StationReading, type ReadingsResponse, type HourlyAggregationResponse, type HourlyDataRow } from '@/lib/api-client';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 import { getStationImage } from '@/lib/stationImages';
 import { FeatureType, ChartDataPoint, StationData } from '@/types';
@@ -152,11 +148,6 @@ export default function StationDetails() {
   const [error, setError] = useState<string | null>(null);
   const [availableFields, setAvailableFields] = useState<string[]>([]);
   
-  // Defaults will be derived from actual readings data (set in useEffect to avoid hydration mismatch)
-  // Default values can be adjusted here if a broader initial query window is desired.
-  const defaultEndDate = new Date('2026-04-07');
-  const defaultStartDate = new Date('2025-09-01'); // Adjusted start date to September 2025
-  
   // State for mounted check
   const [mounted, setMounted] = useState(false);
 
@@ -164,7 +155,6 @@ export default function StationDetails() {
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [selectedUnit, setSelectedUnit] = useState<string>('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [selectedParameters, setSelectedParameters] = useState<string[]>([]);
 
   // Dialog states
@@ -181,6 +171,7 @@ export default function StationDetails() {
   const [readingsLoadedSoFar, setReadingsLoadedSoFar] = useState(0);
   const [hourlyEfficiencyLoading, setHourlyEfficiencyLoading] = useState(false);
   const [hourlyEfficiencyData, setHourlyEfficiencyData] = useState<ChartDataPoint[]>([]);
+  const [hourlyRows, setHourlyRows] = useState<HourlyDataRow[]>([]);
 
   // Loading state for date-range re-fetch
   const [readingsLoading, setReadingsLoading] = useState(false);
@@ -194,7 +185,6 @@ export default function StationDetails() {
   const [tempStartDate, setTempStartDate] = useState<Date | null>(null);
   const [tempEndDate, setTempEndDate] = useState<Date | null>(null);
   const [tempUnit, setTempUnit] = useState<string>('');
-  const [tempCategory, setTempCategory] = useState<string>('');
   const [tempParameters, setTempParameters] = useState<string[]>([]);
 
   // Fetch station data and readings
@@ -237,14 +227,11 @@ export default function StationDetails() {
           setTempStartDate(autoStart);
           setTempEndDate(autoEnd);
           
-          // Auto-select first available category & parameter
+          // Auto-select first available parameter
           const fields = foundStation.metadata.available_fields;
           for (const field of fields) {
-            const cat = fieldCategories[field];
-            if (cat && fieldDisplayNames[field]) {
-              setSelectedCategory(cat);
+            if (fieldCategories[field] && fieldDisplayNames[field]) {
               setSelectedParameters([field]);
-              setTempCategory(cat);
               setTempParameters([field]);
               setSelectedUnit(foundStation.unit || '');
               setTempUnit(foundStation.unit || '');
@@ -343,18 +330,12 @@ export default function StationDetails() {
   // Handle parameters apply
   const handleParamApply = () => {
     setSelectedUnit(tempUnit);
-    setSelectedCategory(tempCategory);
     setSelectedParameters(tempParameters);
     setParamDialogOpen(false);
   };
-  
-  // Handle category change in dialog
-  const handleTempCategoryChange = (category: string) => {
-    setTempCategory(category);
-    setTempParameters([]);
-  };
-  
-  // Handle parameter selection (multiple)
+
+  // Handle parameter selection (multiple) — no longer restricted to one category,
+  // so a chart can pair e.g. energy with humidity.
   const handleParameterToggle = (parameter: string) => {
     setTempParameters(prev => {
       if (prev.includes(parameter)) {
@@ -365,13 +346,11 @@ export default function StationDetails() {
       return prev;
     });
   };
-  
-  // Handle category change
-  const handleCategoryChange = (category: string) => {
-    setSelectedCategory(category);
-    // Clear selected parameters when category changes
-    setSelectedParameters([]);
-  };
+
+  // Category label for display purposes only — derived from whatever parameters
+  // are actually selected, since selection itself is no longer category-scoped.
+  const categoryLabelForParams = (params: string[]): string =>
+    Array.from(new Set(params.map(p => fieldCategories[p]).filter((c): c is string => Boolean(c)))).join(' + ');
 
   // Get available parameters grouped by category
   const parameterCategories = useMemo(() => {
@@ -417,29 +396,9 @@ export default function StationDetails() {
     return categories;
   }, [availableFields]);
 
-  // Demo helper: apply demo selections so users can preview charts
-  const applyDemoSelection = () => {
-    const firstCategory = Object.keys(parameterCategories)[0];
-    const firstParam = parameterCategories[firstCategory]?.[0];
-    
-    if (firstCategory && firstParam) {
-      // Use the static defaults defined above
-      setTempStartDate(defaultStartDate);
-      setTempEndDate(defaultEndDate);
-      setTempCategory(firstCategory);
-      setTempParameters([firstParam]);
-      setTempUnit(station?.unit || '');
-
-      // Apply immediately
-      setStartDate(defaultStartDate);
-      setEndDate(defaultEndDate);
-      setSelectedCategory(firstCategory);
-      setSelectedParameters([firstParam]);
-      setSelectedUnit(station?.unit || '');
-    }
-  };
-  
-  const chartData: ChartDataPoint[] = useMemo(() => {
+  // One independent data series per selected parameter — rendered as separate graphs
+  // rather than overlaid on shared axes, so each parameter reads at its own scale.
+  const chartDataByParam: { field: string; data: ChartDataPoint[] }[] = useMemo(() => {
     if (!startDate || !endDate || selectedParameters.length === 0 || readings.length === 0) return [];
     
     // Filter readings by date range
@@ -546,13 +505,12 @@ export default function StationDetails() {
       return typeof v === 'number' ? v : 0;
     };
 
-    const field1 = selectedParameters[0];
-    const field2 = selectedParameters.length > 1 ? selectedParameters[1] : null;
-    
-    return filteredReadings.map(reading => ({
-      date: reading.timestamp,
-      value: resolveValue(reading, field1),
-      ...(field2 ? { value2: resolveValue(reading, field2) } : {}),
+    return selectedParameters.map(field => ({
+      field,
+      data: filteredReadings.map(reading => ({
+        date: reading.timestamp,
+        value: resolveValue(reading, field),
+      })),
     }));
   }, [startDate, endDate, selectedParameters, readings]);
   
@@ -575,6 +533,7 @@ export default function StationDetails() {
     async function fetchHourlyEfficiency() {
       if (!startDate || !endDate) {
         setHourlyEfficiencyData([]);
+        setHourlyRows([]);
         return;
       }
 
@@ -595,10 +554,12 @@ export default function StationDetails() {
           }));
 
         setHourlyEfficiencyData(points);
+        setHourlyRows(resp.data || []);
       } catch (err) {
         if (!cancelled) {
           console.error('Failed to fetch hourly harvesting efficiency:', err);
           setHourlyEfficiencyData([]);
+          setHourlyRows([]);
         }
       } finally {
         if (!cancelled) setHourlyEfficiencyLoading(false);
@@ -665,6 +626,12 @@ export default function StationDetails() {
     liveAgeSec === null ? 'unknown' : liveAgeSec < 120 ? 'fresh' : liveAgeSec < 600 ? 'stale' : 'dead';
   const liveStatusColor = { fresh: '#4caf50', stale: '#ff9800', dead: '#f44336', unknown: '#9e9e9e' }[liveStatus];
   const liveStatusText = { fresh: 'Live', stale: 'Delayed', dead: 'Not sending', unknown: 'Waiting for data' }[liveStatus];
+
+  // Totals for the selected date period — summed from the hourly aggregation rather than
+  // averaging per-hour ratios, so a mostly-idle period doesn't skew the energy/liter figure.
+  const periodTotalWaterL = hourlyRows.reduce((sum, r) => sum + (r.water_produced_L ?? 0), 0);
+  const periodTotalEnergyKWh = hourlyRows.reduce((sum, r) => sum + (r.energy_consumed_kWh ?? 0), 0);
+  const periodEnergyPerLiter = periodTotalWaterL > 0 ? periodTotalEnergyKWh / periodTotalWaterL : null;
   
   return (
     <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 4, maxWidth: '1600px', mx: 'auto' }}>
@@ -849,6 +816,12 @@ export default function StationDetails() {
             </Box>
           </Box>
 
+          {startDate && endDate && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+              Humidity and power are instant readings; water produced and energy consumption are totals for {dateRangeString}.
+            </Typography>
+          )}
+
           {liveReadingError && !liveReading && (
             <Alert severity="warning" sx={{ borderRadius: 2 }}>
               Couldn&apos;t load a live reading: {liveReadingError}
@@ -858,13 +831,13 @@ export default function StationDetails() {
           {liveReading && (
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(auto-fit, minmax(140px, 1fr))' }, gap: 2 }}>
               {[
-                { key: 'weight', label: 'Mass Balance', value: liveReading.weight, unit: 'g' },
-                { key: 'humidity', label: 'Intake Humidity', value: liveReading.humidity, unit: '%' },
-                { key: 'outtake_humidity', label: 'Outtake Humidity', value: liveReading.outtake_humidity, unit: '%' },
-                { key: 'energy', label: 'Energy', value: typeof liveReading.energy === 'number' ? liveReading.energy / 1000 : null, unit: 'kWh' },
-                { key: 'power', label: 'Power', value: liveReading.power, unit: 'W' },
+                { key: 'water_total', label: 'Total Water Produced', value: hourlyRows.length > 0 ? periodTotalWaterL : null, unit: 'L', decimals: 2, requires: ['weight'] },
+                { key: 'humidity', label: 'Intake Humidity', value: liveReading.humidity, unit: '%', decimals: 1, requires: ['humidity'] },
+                { key: 'outtake_humidity', label: 'Outtake Humidity', value: liveReading.outtake_humidity, unit: '%', decimals: 1, requires: ['outtake_humidity'] },
+                { key: 'energy_per_liter', label: 'Energy Consumption', value: periodEnergyPerLiter, unit: 'kWh/L', decimals: 3, requires: ['energy', 'weight'] },
+                { key: 'power', label: 'Power', value: liveReading.power, unit: 'W', decimals: 1, requires: ['power'] },
               ]
-                .filter(f => availableFields.includes(f.key) && typeof f.value === 'number')
+                .filter(f => f.requires.every(r => availableFields.includes(r)) && typeof f.value === 'number')
                 .map(f => (
                   <Box
                     key={f.key}
@@ -879,7 +852,7 @@ export default function StationDetails() {
                       {f.label.toUpperCase()}
                     </Typography>
                     <Typography variant="h6" sx={{ fontWeight: 700, color: '#1565c0' }}>
-                      {(f.value as number).toFixed(f.unit === 'kWh' ? 3 : 1)} {f.unit}
+                      {(f.value as number).toFixed(f.decimals)} {f.unit}
                     </Typography>
                   </Box>
                 ))}
@@ -1033,7 +1006,6 @@ export default function StationDetails() {
                 startIcon={<Tune sx={{ fontSize: '1.5rem' }} />}
                 onClick={() => {
                   setTempUnit(selectedUnit);
-                  setTempCategory(selectedCategory);
                   setTempParameters(selectedParameters);
                   setParamDialogOpen(true);
                 }}
@@ -1063,8 +1035,8 @@ export default function StationDetails() {
                     PARAMETERS
                   </Typography>
                 <Typography sx={{ fontWeight: 600, fontSize: '0.95rem', textAlign: 'left' }}>
-                  {selectedCategory && selectedParameters.length > 0
-                    ? `${selectedCategory} • ${selectedParameters.map(p => fieldDisplayNames[p] || p).join(' & ')}`
+                  {selectedParameters.length > 0
+                    ? `${categoryLabelForParams(selectedParameters)} • ${selectedParameters.map(p => fieldDisplayNames[p] || p).join(' & ')}`
                     : 'Select Parameters'}
                 </Typography>
                 </Box>
@@ -1100,22 +1072,23 @@ export default function StationDetails() {
         </Alert>
       )}
 
-      {!readingsLoading && startDate && endDate && selectedParameters.length > 0 && (
+      {!readingsLoading && startDate && endDate && chartDataByParam.map(({ field, data }, i) => (
         <motion.div
+          key={field}
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
+          transition={{ duration: 0.5, delay: 0.3 + i * 0.05 }}
         >
           <FeaturePlot
-            data={chartData}
-            feature={`${selectedCategory} - ${selectedParameters.map(p => fieldDisplayNames[p] || p).join(', ')}` as FeatureType}
+            data={data}
+            feature={`${fieldCategories[field] || ''} - ${fieldDisplayNames[field] || field}` as FeatureType}
             startDate={format(startDate, 'yyyy-MM-dd')}
             endDate={format(endDate, 'yyyy-MM-dd')}
-            paramNames={selectedParameters.map(p => fieldDisplayNames[p] || p)}
-            paramUnits={selectedParameters.map(p => fieldUnits[p] || '')}
+            paramNames={[fieldDisplayNames[field] || field]}
+            paramUnits={[fieldUnits[field] || '']}
           />
         </motion.div>
-      )}
+      ))}
 
       {!readingsLoading && startDate && endDate && (
         <motion.div
@@ -1713,140 +1686,89 @@ export default function StationDetails() {
           Configure Parameters
         </DialogTitle>
         <DialogContent sx={{ pt: 5, pb: 4, px: 4 }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {/* Category Selector */}
-            <Box>
-              <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, color: 'text.secondary', fontSize: '0.875rem' }}>
-                PARAMETER CATEGORY
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary', fontSize: '0.875rem' }}>
+                SELECT UP TO 2 PARAMETERS — ANY CATEGORY
               </Typography>
-              <FormControl fullWidth size="medium">
-                <InputLabel>Select Category</InputLabel>
-                <Select
-                  value={tempCategory}
-                  label="Select Category"
-                  onChange={(e) => handleTempCategoryChange(e.target.value)}
-                  MenuProps={{
-                    PaperProps: {
-                      sx: {
-                        maxHeight: 300,
-                        mt: 1,
-                        boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-                        borderRadius: 2,
-                      }
-                    }
-                  }}
-                  sx={{
-                    backgroundColor: '#f8f9fa',
-                    borderRadius: 2,
-                    '&:hover': {
-                      backgroundColor: '#e9ecef'
-                    },
-                    '&.Mui-focused': {
-                      backgroundColor: 'white'
-                    }
-                  }}
-                >
-                  {Object.keys(parameterCategories).map((category) => (
-                    <MenuItem 
-                      key={category} 
-                      value={category}
-                      sx={{
-                        py: 1.5,
-                        px: 2.5,
-                        fontSize: '1rem',
-                        '&:hover': {
-                          backgroundColor: '#e3f2fd'
-                        },
-                        '&.Mui-selected': {
-                          backgroundColor: '#bbdefb',
-                          fontWeight: 600,
-                          '&:hover': {
-                            backgroundColor: '#90caf9'
-                          }
-                        }
-                      }}
-                    >
-                      {category}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Chip
+                label={`${tempParameters.length}/2 selected`}
+                size="small"
+                sx={{
+                  fontWeight: 600,
+                  backgroundColor: tempParameters.length === 2 ? '#4caf50' : '#e3f2fd',
+                  color: tempParameters.length === 2 ? 'white' : '#1565c0'
+                }}
+              />
             </Box>
 
-            <Box>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary', fontSize: '0.875rem' }}>
-                  SELECT PARAMETERS (MAX 2)
-                </Typography>
-                <Chip 
-                  label={`${tempParameters.length}/2 selected`}
-                  size="small"
-                  sx={{ 
-                    fontWeight: 600,
-                    backgroundColor: tempParameters.length === 2 ? '#4caf50' : '#e3f2fd',
-                    color: tempParameters.length === 2 ? 'white' : '#1565c0'
-                  }}
-                />
-              </Box>
-              
-              {tempCategory && parameterCategories[tempCategory] && parameterCategories[tempCategory].length > 0 ? (
-                <Box sx={{ 
-                  backgroundColor: '#f8f9fa', 
-                  borderRadius: 2, 
-                  p: 2.5,
-                  maxHeight: '350px',
-                  overflowY: 'auto'
-                }}>
-                  <FormGroup>
-                    {parameterCategories[tempCategory].map((param) => (
-                      <FormControlLabel
-                        key={param}
-                        control={
-                          <Checkbox
-                            checked={tempParameters.includes(param)}
-                            onChange={() => handleParameterToggle(param)}
-                            disabled={!tempParameters.includes(param) && tempParameters.length >= 2}
-                            sx={{
-                              color: '#1565c0',
-                              '&.Mui-checked': {
+            {Object.keys(parameterCategories).length > 0 ? (
+              <Box sx={{
+                backgroundColor: '#f8f9fa',
+                borderRadius: 2,
+                p: 2.5,
+                maxHeight: '420px',
+                overflowY: 'auto'
+              }}>
+                {Object.entries(parameterCategories).map(([category, params]) => (
+                  <Box key={category} sx={{ mb: 2.5, '&:last-of-type': { mb: 0 } }}>
+                    <Typography
+                      variant="caption"
+                      sx={{ fontWeight: 700, color: '#1565c0', letterSpacing: 0.5, display: 'block', mb: 1 }}
+                    >
+                      {category.toUpperCase()}
+                    </Typography>
+                    <FormGroup>
+                      {params.map((param) => (
+                        <FormControlLabel
+                          key={param}
+                          control={
+                            <Checkbox
+                              checked={tempParameters.includes(param)}
+                              onChange={() => handleParameterToggle(param)}
+                              disabled={!tempParameters.includes(param) && tempParameters.length >= 2}
+                              sx={{
                                 color: '#1565c0',
-                              },
-                              '&.Mui-disabled': {
-                                color: '#ccc',
-                              }
-                            }}
-                          />
-                        }
-                        label={fieldDisplayNames[param] || param}
-                        sx={{
-                          py: 1,
-                          px: 2,
-                          borderRadius: 1.5,
-                          mb: 1,
-                          backgroundColor: tempParameters.includes(param) ? '#e3f2fd' : 'white',
-                          border: '1px solid',
-                          borderColor: tempParameters.includes(param) ? '#1565c0' : '#e0e0e0',
-                          transition: 'all 0.2s',
-                          '&:hover': {
-                            backgroundColor: tempParameters.includes(param) ? '#bbdefb' : '#f5f5f5',
-                            transform: 'translateX(4px)',
-                          },
-                          '& .MuiFormControlLabel-label': {
-                            fontSize: '0.95rem',
-                            fontWeight: tempParameters.includes(param) ? 600 : 400,
-                            color: tempParameters.includes(param) ? '#1565c0' : 'text.primary',
+                                '&.Mui-checked': {
+                                  color: '#1565c0',
+                                },
+                                '&.Mui-disabled': {
+                                  color: '#ccc',
+                                }
+                              }}
+                            />
                           }
-                        }}
-                      />
-                    ))}
-                  </FormGroup>
-                </Box>
-              ) : (
-                <Alert severity="info" sx={{ borderRadius: 2 }}>
-                  {tempCategory ? 'No parameters available for this category' : 'Please select a category first'}
-                </Alert>
-              )}
-            </Box>
+                          label={fieldDisplayNames[param] || param}
+                          sx={{
+                            py: 1,
+                            px: 2,
+                            borderRadius: 1.5,
+                            mb: 1,
+                            backgroundColor: tempParameters.includes(param) ? '#e3f2fd' : 'white',
+                            border: '1px solid',
+                            borderColor: tempParameters.includes(param) ? '#1565c0' : '#e0e0e0',
+                            transition: 'all 0.2s',
+                            '&:hover': {
+                              backgroundColor: tempParameters.includes(param) ? '#bbdefb' : '#f5f5f5',
+                              transform: 'translateX(4px)',
+                            },
+                            '& .MuiFormControlLabel-label': {
+                              fontSize: '0.95rem',
+                              fontWeight: tempParameters.includes(param) ? 600 : 400,
+                              color: tempParameters.includes(param) ? '#1565c0' : 'text.primary',
+                            }
+                          }}
+                        />
+                      ))}
+                    </FormGroup>
+                  </Box>
+                ))}
+              </Box>
+            ) : (
+              <Alert severity="info" sx={{ borderRadius: 2 }}>
+                No parameters available for this station
+              </Alert>
+            )}
           </Box>
         </DialogContent>
         <DialogActions sx={{ 
