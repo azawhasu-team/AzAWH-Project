@@ -111,6 +111,16 @@ const COMPUTED_FIELDS = new Set([
 // AWH device duct cross-sectional area (m²) — from hardware spec (273.60 sq in = 0.18 m²)
 const AWH_DUCT_AREA_M2 = 0.18;
 
+// Minimum weight increment (g) counted as real water production, not balance jitter.
+// Some stations' readings wobble ±5-25g between consecutive readings with no real
+// accumulating trend (confirmed on station_testbed_1: true net change over 2 days was
+// ~170g, but summing every positive wobble gave ~9000g — a ~50x overcount). 15g sits
+// well below the real per-step jumps seen on a working station's pump-drain cycles
+// (station_AquaPars@PowerPlant's positive deltas are ~99.7% above this floor) while
+// filtering out most of the noise-only jitter. Keep in sync with the same constant in
+// awh_az/backend/main.py's hourly aggregation.
+const WEIGHT_NOISE_FLOOR_G = 15;
+
 // Field categories for grouping
 const fieldCategories: Record<string, string> = {
   temperature: 'Air Conditions',
@@ -420,7 +430,8 @@ export default function StationDetails() {
     filteredReadings.forEach(r => {
       const w = typeof r.weight === 'number' ? r.weight : null;
       if (w !== null) {
-        runningWaterG += prevW !== null ? Math.max(w - prevW, 0) : 0;
+        const delta = prevW !== null ? w - prevW : 0;
+        runningWaterG += delta >= WEIGHT_NOISE_FLOOR_G ? delta : 0;
         prevW = w;
       }
       accWaterMap.set(r.timestamp, Math.round(runningWaterG / 1000 * 1000000) / 1000000);
@@ -445,7 +456,8 @@ export default function StationDetails() {
     filteredReadings.forEach(r => {
       const w = typeof r.weight === 'number' ? r.weight : null;
       if (w !== null) {
-        incWaterMap.set(r.timestamp, prevWeff !== null ? Math.max(w - prevWeff, 0) : 0);
+        const delta = prevWeff !== null ? w - prevWeff : 0;
+        incWaterMap.set(r.timestamp, delta >= WEIGHT_NOISE_FLOOR_G ? delta : 0);
         prevWeff = w;
       } else {
         incWaterMap.set(r.timestamp, 0);
@@ -1337,11 +1349,12 @@ export default function StationDetails() {
                         if (typeof r.outtake_temperature === 'number' && typeof r.outtake_humidity === 'number') {
                           row.abs_humidity_outtake = absHumidity(r.outtake_temperature, r.outtake_humidity);
                         }
-                        // Incremental water (only positive deltas — never subtract)
+                        // Incremental water (only positive deltas above the noise floor — never subtract)
                         const w = r.weight as number | null | undefined;
                         let incWG = 0;
                         if (typeof w === 'number') {
-                          incWG = prevWeight !== null ? Math.max(w - prevWeight, 0) : 0;
+                          const weightDelta = prevWeight !== null ? w - prevWeight : 0;
+                          incWG = weightDelta >= WEIGHT_NOISE_FLOOR_G ? weightDelta : 0;
                           row.incremental_water_g = incWG;
                           accumulatedWaterG += incWG;
                           row.accumulated_water_L = Math.round(accumulatedWaterG / 1000 * 1000000) / 1000000;
