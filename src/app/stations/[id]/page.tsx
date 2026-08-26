@@ -632,6 +632,19 @@ export default function StationDetails() {
   const periodTotalWaterL = hourlyRows.reduce((sum, r) => sum + (r.water_produced_L ?? 0), 0);
   const periodTotalEnergyKWh = hourlyRows.reduce((sum, r) => sum + (r.energy_consumed_kWh ?? 0), 0);
   const periodEnergyPerLiter = periodTotalWaterL > 0 ? periodTotalEnergyKWh / periodTotalWaterL : null;
+
+  // Most recent hour's water production rate — for Live Status, distinct from the
+  // period total above.
+  const latestHourlyRow = hourlyRows.length > 0 ? hourlyRows[hourlyRows.length - 1] : null;
+
+  // Hourly chart series — one point per hour, still rendered as a connected line/area
+  // like the harvesting efficiency chart below.
+  const hourlyEnergyPerLiterData: ChartDataPoint[] = hourlyRows
+    .filter(r => typeof r.energy_per_liter_kWh_L === 'number')
+    .map(r => ({ date: r.hour, value: r.energy_per_liter_kWh_L as number }));
+  const hourlyWaterProductionData: ChartDataPoint[] = hourlyRows
+    .filter(r => typeof r.water_produced_L === 'number')
+    .map(r => ({ date: r.hour, value: r.water_produced_L as number }));
   
   return (
     <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 4, maxWidth: '1600px', mx: 'auto' }}>
@@ -818,7 +831,7 @@ export default function StationDetails() {
 
           {startDate && endDate && (
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-              Humidity and power are instant readings; water produced and energy consumption are totals for {dateRangeString}.
+              Humidity and power are instant readings; water production is the most recent hour&apos;s rate; total water produced and energy consumption are totals for {dateRangeString}.
             </Typography>
           )}
 
@@ -832,6 +845,7 @@ export default function StationDetails() {
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(auto-fit, minmax(140px, 1fr))' }, gap: 2 }}>
               {[
                 { key: 'water_total', label: 'Total Water Produced', value: hourlyRows.length > 0 ? periodTotalWaterL : null, unit: 'L', decimals: 2, requires: ['weight'] },
+                { key: 'water_per_hour', label: 'Water Production', value: latestHourlyRow?.water_produced_L ?? null, unit: 'L/h', decimals: 2, requires: ['weight'] },
                 { key: 'humidity', label: 'Intake Humidity', value: liveReading.humidity, unit: '%', decimals: 1, requires: ['humidity'] },
                 { key: 'outtake_humidity', label: 'Outtake Humidity', value: liveReading.outtake_humidity, unit: '%', decimals: 1, requires: ['outtake_humidity'] },
                 { key: 'energy_per_liter', label: 'Energy Consumption', value: periodEnergyPerLiter, unit: 'kWh/L', decimals: 3, requires: ['energy', 'weight'] },
@@ -1113,7 +1127,41 @@ export default function StationDetails() {
           )}
         </motion.div>
       )}
-      
+
+      {!readingsLoading && startDate && endDate && !hourlyEfficiencyLoading && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.4 }}
+        >
+          <FeaturePlot
+            data={hourlyEnergyPerLiterData}
+            feature={'Efficiency - Specific Energy Consumption (Hourly)' as FeatureType}
+            startDate={format(startDate, 'yyyy-MM-dd')}
+            endDate={format(endDate, 'yyyy-MM-dd')}
+            paramNames={['Specific Energy Consumption (Hourly)']}
+            paramUnits={['kWh/L']}
+          />
+        </motion.div>
+      )}
+
+      {!readingsLoading && startDate && endDate && !hourlyEfficiencyLoading && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.45 }}
+        >
+          <FeaturePlot
+            data={hourlyWaterProductionData}
+            feature={'Water Production - Water Production Rate (Hourly)' as FeatureType}
+            startDate={format(startDate, 'yyyy-MM-dd')}
+            endDate={format(endDate, 'yyyy-MM-dd')}
+            paramNames={['Water Production Rate (Hourly)']}
+            paramUnits={['L/h']}
+          />
+        </motion.div>
+      )}
+
       {/* Data Download Section */}
       {startDate && endDate && (
         <motion.div
