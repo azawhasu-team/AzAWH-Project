@@ -3,13 +3,15 @@
 import React, { useEffect, useState } from 'react';
 import { Typography, Box, Fade, Link as MuiLink, CircularProgress, Alert } from '@mui/material';
 import StationCard from '@/components/StationCard';
-import { apiClient, type StationInfo } from '@/lib/api-client';
+import { apiClient, type StationInfo, type ImpactResponse } from '@/lib/api-client';
 import { getStationImage } from '@/lib/stationImages';
+import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 
 export default function Home() {
   const [stations, setStations] = useState<StationInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [impact, setImpact] = useState<ImpactResponse | null>(null);
 
   useEffect(() => {
     async function fetchStations() {
@@ -26,7 +28,20 @@ export default function Home() {
       }
     }
 
+    // Fetched separately from stations — a failure here (e.g. lifetime
+    // totals haven't been computed for any station yet) shouldn't break
+    // the rest of the homepage.
+    async function fetchImpact() {
+      try {
+        const data = await apiClient.getImpact();
+        setImpact(data);
+      } catch (err) {
+        console.error('Failed to fetch impact totals:', err);
+      }
+    }
+
     fetchStations();
+    fetchImpact();
   }, []);
 
   // Map API data to StationCard format
@@ -135,6 +150,73 @@ export default function Home() {
           </Typography>
         </Box>
       </Box>
+
+      {/* Impact Section - real cumulative water harvested, computed offline
+          from filtered balance-scale deltas (see compute_lifetime_totals.py) */}
+      {impact && impact.total_liters > 0 && (
+        <Box
+          sx={{
+            background: 'linear-gradient(135deg, #901340 0%, #5e0c29 100%)',
+            py: { xs: 6, md: 8 },
+            px: { xs: 2, md: 4 },
+          }}
+        >
+          <Box sx={{ maxWidth: '1000px', mx: 'auto', textAlign: 'center' }}>
+            <Typography
+              variant="overline"
+              sx={{ color: '#ffcb25', letterSpacing: 3, fontWeight: 700, fontSize: '0.85rem' }}
+            >
+              Real-World Impact
+            </Typography>
+            <Typography
+              variant="h2"
+              sx={{
+                color: 'white',
+                fontWeight: 800,
+                fontSize: { xs: '2.75rem', sm: '3.5rem', md: '5rem' },
+                my: 1,
+                lineHeight: 1.1,
+              }}
+            >
+              {impact.total_liters.toLocaleString(undefined, { maximumFractionDigits: 1 })} L
+            </Typography>
+            <Typography variant="h6" sx={{ color: 'rgba(255,255,255,0.92)', fontWeight: 400, mb: 1 }}>
+              of water harvested directly from the air — and counting
+            </Typography>
+            <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 4 }}>
+              ≈ {Math.round(impact.total_liters / 2).toLocaleString()} days of drinking water for one person, at 2 L/day
+            </Typography>
+
+            <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
+              {impact.stations.map((s) => (
+                <Box
+                  key={s.station_name}
+                  sx={{
+                    background: 'rgba(255,255,255,0.12)',
+                    borderRadius: 2,
+                    px: 3,
+                    py: 2,
+                    minWidth: 180,
+                  }}
+                >
+                  <Typography sx={{ color: '#ffcb25', fontWeight: 700, fontSize: '1.5rem' }}>
+                    {s.total_liters.toLocaleString(undefined, { maximumFractionDigits: 1 })} L
+                  </Typography>
+                  <Typography sx={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.8rem' }}>
+                    {s.location || s.station_name}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+
+            {impact.updated_at && (
+              <Typography variant="caption" sx={{ display: 'block', mt: 3, color: 'rgba(255,255,255,0.5)' }}>
+                Last updated {formatPhoenixMonthDayTime(new Date(impact.updated_at))}
+              </Typography>
+            )}
+          </Box>
+        </Box>
+      )}
 
       {/* Stations Section */}
       <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 6, maxWidth: '1400px', mx: 'auto', width: '100%', boxSizing: 'border-box' }}>
@@ -381,10 +463,10 @@ export default function Home() {
             }}
           >
             <Typography variant="h3" sx={{ fontWeight: 700, color: '#ffcb25', mb: 1.5, fontSize: '2.5rem' }}>
-              100%
+              {impact ? `${impact.total_liters.toLocaleString(undefined, { maximumFractionDigits: 0 })} L` : '—'}
             </Typography>
             <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Sustainable Water
+              Harvested Lifetime
             </Typography>
           </Box>
 
@@ -502,10 +584,10 @@ export default function Home() {
             }}
           >
             <Typography variant="h3" sx={{ fontWeight: 700, color: '#ffcb25', mb: 1.5, fontSize: '2.5rem' }}>
-              100%
+              {impact ? `${impact.total_liters.toLocaleString(undefined, { maximumFractionDigits: 0 })} L` : '—'}
             </Typography>
             <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Sustainable Water
+              Harvested Lifetime
             </Typography>
           </Box>
         </Box>

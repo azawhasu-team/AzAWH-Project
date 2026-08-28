@@ -74,6 +74,20 @@ export interface HealthResponse {
   services: Record<string, string>;
 }
 
+export interface StationImpact {
+  station_name: string;
+  location?: string | null;
+  total_liters: number;
+  readings_processed: number;
+  updated_at?: string | null;
+}
+
+export interface ImpactResponse {
+  total_liters: number;
+  stations: StationImpact[];
+  updated_at?: string | null;
+}
+
 class APIClient {
   private baseURL: string;
 
@@ -124,6 +138,13 @@ class APIClient {
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
     }
+  }
+
+  /**
+   * Real-world cumulative water-harvested totals across all stations
+   */
+  async getImpact(): Promise<ImpactResponse> {
+    return this.fetch<ImpactResponse>('/impact');
   }
 
   /**
