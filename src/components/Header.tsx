@@ -85,6 +85,22 @@ export default function Header() {
               Home
             </Button>
           </Link>
+          <Link href="/compare" passHref style={{ textDecoration: 'none' }}>
+            <Button
+              sx={{
+                color: 'text.primary',
+                textTransform: 'none',
+                fontSize: { xs: '0.875rem', md: '1rem' },
+                fontWeight: 500,
+                '&:hover': {
+                  backgroundColor: 'rgba(144, 19, 64, 0.08)',
+                  color: 'primary.main',
+                },
+              }}
+            >
+              Compare
+            </Button>
+          </Link>
           <Link href="/about" passHref style={{ textDecoration: 'none' }}>
             <Button
               sx={{
