@@ -203,7 +203,7 @@ export default function Home() {
                     {s.total_liters.toLocaleString(undefined, { maximumFractionDigits: 1 })} L
                   </Typography>
                   <Typography sx={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.8rem' }}>
-                    {s.location || s.station_name}
+                    {s.station_name.replace(/^station_/, '')}
                   </Typography>
                 </Box>
               ))}
