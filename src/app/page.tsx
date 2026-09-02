@@ -96,7 +96,7 @@ export default function Home() {
           height: 'calc(100vh - 80px)',
           minHeight: '600px',
           width: '100%',
-          backgroundImage: 'url(/phx_cityscape.jpg)',
+          backgroundImage: 'url(https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1600&q=80)',
           backgroundSize: 'cover',
           backgroundPosition: 'center',
           overflow: 'hidden',
