@@ -4,7 +4,6 @@ import React, { useEffect, useState } from 'react';
 import { Typography, Box, Fade, Link as MuiLink, Skeleton, Alert } from '@mui/material';
 import StationCard from '@/components/StationCard';
 import { apiClient, type StationInfo, type ImpactResponse } from '@/lib/api-client';
-import { getStationImage } from '@/lib/stationImages';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 
 export default function Home() {
@@ -51,7 +50,6 @@ export default function Home() {
     location: station.location || 'Arizona, USA',  // Default location
     status: (station.status === 'active' ? 'Online' : 'Offline') as 'Online' | 'Offline',
     units: [station.unit],
-    image: getStationImage(station.station_name),
   }));
 
   if (loading) {
