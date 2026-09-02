@@ -712,6 +712,20 @@ export default function StationDetails() {
           }}
         >
         <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 4, alignItems: 'center' }}>
+          {/* Station Image — placeholder until real deployment photos are provided */}
+          <Box
+            component="img"
+            src="/station-placeholder.svg"
+            alt="Station photo coming soon"
+            sx={{
+              width: { xs: '100%', md: '450px' },
+              height: { xs: '250px', md: '320px' },
+              objectFit: 'cover',
+              borderRadius: 3,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+            }}
+          />
+
           {/* Station Info */}
           <Box sx={{ flex: 1 }}>
             <Box display="flex" alignItems="center" gap={2} mb={2} flexWrap="wrap">

@@ -5,6 +5,7 @@ import {
   Card,
   CardContent,
   CardActions,
+  CardMedia,
   Typography,
   Button,
   Chip,
@@ -49,6 +50,16 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
       }}
       onClick={handleViewDetails}
     >
+      <CardMedia
+        component="img"
+        height="200"
+        image="/station-placeholder.svg"
+        alt="Station photo coming soon"
+        sx={{
+          objectFit: 'cover',
+          borderBottom: '3px solid #1e88e5'
+        }}
+      />
       <CardContent sx={{ flexGrow: 1, p: 3 }}>
         <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2} gap={1}>
           <Typography 
