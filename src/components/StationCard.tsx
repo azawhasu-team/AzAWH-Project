@@ -30,10 +30,6 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
     return status === 'Online' ? 'success' : 'error';
   };
 
-  const getStatusIconColor = (status: string) => {
-    return status === 'Online' ? '#4caf50' : '#f44336';
-  };
-
   return (
     <Card 
       sx={{ 

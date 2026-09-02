@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Typography, Box, Fade, Link as MuiLink, CircularProgress, Alert } from '@mui/material';
+import { Typography, Box, Fade, Link as MuiLink, Skeleton, Alert } from '@mui/material';
 import StationCard from '@/components/StationCard';
 import { apiClient, type StationInfo, type ImpactResponse } from '@/lib/api-client';
 import { getStationImage } from '@/lib/stationImages';
@@ -56,8 +56,23 @@ export default function Home() {
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
-        <CircularProgress size={60} sx={{ color: '#901340' }} />
+      <Box sx={{ width: '100%' }}>
+        <Skeleton variant="rectangular" width="100%" height={420} />
+        <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 6, maxWidth: '1400px', mx: 'auto' }}>
+          <Skeleton variant="text" width={260} height={48} sx={{ mx: 'auto', mb: 1 }} />
+          <Skeleton variant="text" width={420} height={28} sx={{ mx: 'auto', mb: 5 }} />
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(4, 1fr)' },
+              gap: 3,
+            }}
+          >
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} variant="rounded" height={340} />
+            ))}
+          </Box>
+        </Box>
       </Box>
     );
   }
@@ -157,14 +172,14 @@ export default function Home() {
         <Box
           sx={{
             background: 'linear-gradient(135deg, #901340 0%, #5e0c29 100%)',
-            py: { xs: 6, md: 8 },
+            py: { xs: 4, md: 5 },
             px: { xs: 2, md: 4 },
           }}
         >
           <Box sx={{ maxWidth: '1000px', mx: 'auto', textAlign: 'center' }}>
             <Typography
               variant="overline"
-              sx={{ color: '#ffcb25', letterSpacing: 3, fontWeight: 700, fontSize: '0.85rem' }}
+              sx={{ color: '#ffcb25', letterSpacing: 3, fontWeight: 700, fontSize: '0.8rem' }}
             >
               Real-World Impact
             </Typography>
@@ -173,17 +188,18 @@ export default function Home() {
               sx={{
                 color: 'white',
                 fontWeight: 800,
-                fontSize: { xs: '2.75rem', sm: '3.5rem', md: '5rem' },
-                my: 1,
+                fontSize: { xs: '2.25rem', sm: '2.75rem', md: '3.5rem' },
+                mt: 0.5,
+                mb: 0.5,
                 lineHeight: 1.1,
               }}
             >
               {impact.total_liters.toLocaleString(undefined, { maximumFractionDigits: 1 })} L
             </Typography>
-            <Typography variant="h6" sx={{ color: 'rgba(255,255,255,0.92)', fontWeight: 400, mb: 1 }}>
+            <Typography variant="h6" sx={{ color: 'rgba(255,255,255,0.92)', fontWeight: 400, mb: 0.5, fontSize: '1.05rem' }}>
               of water harvested directly from the air — and counting
             </Typography>
-            <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 4 }}>
+            <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 2.5 }}>
               ≈ {Math.round(impact.total_liters / 2).toLocaleString()} days of drinking water for one person, at 2 L/day
             </Typography>
 
@@ -195,14 +211,14 @@ export default function Home() {
                     background: 'rgba(255,255,255,0.12)',
                     borderRadius: 2,
                     px: 3,
-                    py: 2,
+                    py: 1.25,
                     minWidth: 180,
                   }}
                 >
-                  <Typography sx={{ color: '#ffcb25', fontWeight: 700, fontSize: '1.5rem' }}>
+                  <Typography sx={{ color: '#ffcb25', fontWeight: 700, fontSize: '1.3rem' }}>
                     {s.total_liters.toLocaleString(undefined, { maximumFractionDigits: 1 })} L
                   </Typography>
-                  <Typography sx={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.8rem' }}>
+                  <Typography sx={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.78rem' }}>
                     {s.station_name.replace(/^station_/, '')}
                   </Typography>
                 </Box>
@@ -210,7 +226,7 @@ export default function Home() {
             </Box>
 
             {impact.updated_at && (
-              <Typography variant="caption" sx={{ display: 'block', mt: 3, color: 'rgba(255,255,255,0.5)' }}>
+              <Typography variant="caption" sx={{ display: 'block', mt: 1.5, color: 'rgba(255,255,255,0.5)' }}>
                 Last updated {formatPhoenixMonthDayTime(new Date(impact.updated_at))}
               </Typography>
             )}
@@ -282,8 +298,8 @@ export default function Home() {
       </Box>
 
       {/* Separator */}
-      <Box 
-        sx={{ 
+      <Box
+        sx={{
           display: 'flex',
           alignItems: 'center',
           gap: 2,
@@ -291,12 +307,12 @@ export default function Home() {
         }}
       >
         <Box sx={{ flex: 1, height: '2px', background: 'linear-gradient(to right, transparent, #901340, transparent)' }} />
-        <Typography 
-          variant="body2" 
-          sx={{ 
-            color: '#901340', 
-            fontWeight: 600, 
-            textTransform: 'uppercase', 
+        <Typography
+          variant="body2"
+          sx={{
+            color: '#901340',
+            fontWeight: 600,
+            textTransform: 'uppercase',
             letterSpacing: '2px',
             px: 2
           }}
@@ -306,291 +322,48 @@ export default function Home() {
         <Box sx={{ flex: 1, height: '2px', background: 'linear-gradient(to right, transparent, #901340, transparent)' }} />
       </Box>
 
-      {/* Stats Row - Horizontal Scrolling */}
-      <Box 
-        sx={{ 
-          mt: 8,
-          overflow: 'hidden',
-          position: 'relative',
-          '&::before, &::after': {
-            content: '""',
-            position: 'absolute',
-            top: 0,
-            bottom: 0,
-            width: '100px',
-            zIndex: 2,
-            pointerEvents: 'none',
-          },
-          '&::before': {
-            left: 0,
-            background: 'linear-gradient(to right, #fafafa, transparent)',
-          },
-          '&::after': {
-            right: 0,
-            background: 'linear-gradient(to left, #fafafa, transparent)',
-          }
+      {/* Stats Row — static grid. Was an auto-scrolling marquee; replaced
+          because infinite-scroll stat tiles read as a dated pattern for a
+          research/monitoring tool and didn't respect prefers-reduced-motion. */}
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(5, 1fr)' },
+          gap: 3,
         }}
       >
-        <Box
-          sx={{
-            display: 'flex',
-            gap: 3,
-            animation: 'scroll 20s linear infinite',
-            '@keyframes scroll': {
-              '0%': {
-                transform: 'translateX(0)',
+        {[
+          { value: String(stationCards.length), label: 'Total Stations', color: '#901340' },
+          { value: String(stationCards.filter(s => s.status === 'Online').length), label: 'Online Now', color: '#2e7d32' },
+          { value: '12+', label: 'Parameters Tracked', color: '#ffcb25' },
+          { value: '24/7', label: 'Real-time Monitoring', color: '#901340' },
+          { value: impact ? `${impact.total_liters.toLocaleString(undefined, { maximumFractionDigits: 0 })} L` : '—', label: 'Harvested Lifetime', color: '#ffcb25' },
+        ].map((stat, i) => (
+          <Box
+            key={i}
+            sx={{
+              textAlign: 'center',
+              p: 4,
+              background: '#ffffff',
+              borderRadius: 2,
+              border: '2px solid',
+              borderColor: stat.color,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+              transition: 'box-shadow 200ms ease, transform 200ms ease',
+              '&:hover': {
+                boxShadow: '0 6px 20px rgba(0,0,0,0.1)',
+                transform: 'translateY(-3px)',
               },
-              '100%': {
-                transform: 'translateX(-50%)',
-              },
-            },
-            '&:hover': {
-              animationPlayState: 'paused',
-            }
-          }}
-        >
-          {/* First set of stats */}
-          <Box 
-            sx={{ 
-              textAlign: 'center',
-              p: 4,
-              minWidth: '280px',
-              background: '#ffffff',
-              borderRadius: 2,
-              border: '2px solid #901340',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-              transition: 'all 0.3s ease',
-              '&:hover': {
-                boxShadow: '0 4px 16px rgba(144, 19, 64, 0.12)',
-                transform: 'translateY(-2px)'
-              }
             }}
           >
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#901340', mb: 1.5, fontSize: '2.5rem' }}>
-              {stationCards.length}
+            <Typography variant="h3" sx={{ fontWeight: 700, color: stat.color, mb: 1.5, fontSize: '2.5rem' }}>
+              {stat.value}
             </Typography>
             <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Total Stations
+              {stat.label}
             </Typography>
           </Box>
-          
-          <Box 
-            sx={{ 
-              textAlign: 'center',
-              p: 4,
-              minWidth: '280px',
-              background: '#ffffff',
-              borderRadius: 2,
-              border: '2px solid #4caf50',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-              transition: 'all 0.3s ease',
-              '&:hover': {
-                boxShadow: '0 4px 16px rgba(76, 175, 80, 0.12)',
-                transform: 'translateY(-2px)'
-              }
-            }}
-          >
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#4caf50', mb: 1.5, fontSize: '2.5rem' }}>
-              {stationCards.filter(s => s.status === 'Online').length}
-            </Typography>
-            <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Online Now
-            </Typography>
-          </Box>
-          
-          <Box 
-            sx={{ 
-              textAlign: 'center',
-              p: 4,
-              minWidth: '280px',
-              background: '#ffffff',
-              borderRadius: 2,
-              border: '2px solid #ffcb25',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-              transition: 'all 0.3s ease',
-              '&:hover': {
-                boxShadow: '0 4px 16px rgba(255, 203, 37, 0.12)',
-                transform: 'translateY(-2px)'
-              }
-            }}
-          >
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#ffcb25', mb: 1.5, fontSize: '2.5rem' }}>
-              12+
-            </Typography>
-            <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Parameters Tracked
-            </Typography>
-          </Box>
-
-          <Box 
-            sx={{ 
-              textAlign: 'center',
-              p: 4,
-              minWidth: '280px',
-              background: '#ffffff',
-              borderRadius: 2,
-              border: '2px solid #901340',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-              transition: 'all 0.3s ease',
-              '&:hover': {
-                boxShadow: '0 4px 16px rgba(144, 19, 64, 0.12)',
-                transform: 'translateY(-2px)'
-              }
-            }}
-          >
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#901340', mb: 1.5, fontSize: '2.5rem' }}>
-              24/7
-            </Typography>
-            <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Real-time Monitoring
-            </Typography>
-          </Box>
-
-          <Box 
-            sx={{ 
-              textAlign: 'center',
-              p: 4,
-              minWidth: '280px',
-              background: '#ffffff',
-              borderRadius: 2,
-              border: '2px solid #ffcb25',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-              transition: 'all 0.3s ease',
-              '&:hover': {
-                boxShadow: '0 4px 16px rgba(255, 203, 37, 0.12)',
-                transform: 'translateY(-2px)'
-              }
-            }}
-          >
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#ffcb25', mb: 1.5, fontSize: '2.5rem' }}>
-              {impact ? `${impact.total_liters.toLocaleString(undefined, { maximumFractionDigits: 0 })} L` : '—'}
-            </Typography>
-            <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Harvested Lifetime
-            </Typography>
-          </Box>
-
-          {/* Duplicate set for seamless loop */}
-          <Box 
-            sx={{ 
-              textAlign: 'center',
-              p: 4,
-              minWidth: '280px',
-              background: '#ffffff',
-              borderRadius: 2,
-              border: '2px solid #901340',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-              transition: 'all 0.3s ease',
-              '&:hover': {
-                boxShadow: '0 4px 16px rgba(144, 19, 64, 0.12)',
-                transform: 'translateY(-2px)'
-              }
-            }}
-          >
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#901340', mb: 1.5, fontSize: '2.5rem' }}>
-              {stationCards.length}
-            </Typography>
-            <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Total Stations
-            </Typography>
-          </Box>
-          
-          <Box 
-            sx={{ 
-              textAlign: 'center',
-              p: 4,
-              minWidth: '280px',
-              background: '#ffffff',
-              borderRadius: 2,
-              border: '2px solid #4caf50',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-              transition: 'all 0.3s ease',
-              '&:hover': {
-                boxShadow: '0 4px 16px rgba(76, 175, 80, 0.12)',
-                transform: 'translateY(-2px)'
-              }
-            }}
-          >
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#4caf50', mb: 1.5, fontSize: '2.5rem' }}>
-              {stationCards.filter(s => s.status === 'Online').length}
-            </Typography>
-            <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Online Now
-            </Typography>
-          </Box>
-          
-          <Box 
-            sx={{ 
-              textAlign: 'center',
-              p: 4,
-              minWidth: '280px',
-              background: '#ffffff',
-              borderRadius: 2,
-              border: '2px solid #ffcb25',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-              transition: 'all 0.3s ease',
-              '&:hover': {
-                boxShadow: '0 4px 16px rgba(255, 203, 37, 0.12)',
-                transform: 'translateY(-2px)'
-              }
-            }}
-          >
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#ffcb25', mb: 1.5, fontSize: '2.5rem' }}>
-              12+
-            </Typography>
-            <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Parameters Tracked
-            </Typography>
-          </Box>
-
-          <Box 
-            sx={{ 
-              textAlign: 'center',
-              p: 4,
-              minWidth: '280px',
-              background: '#ffffff',
-              borderRadius: 2,
-              border: '2px solid #901340',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-              transition: 'all 0.3s ease',
-              '&:hover': {
-                boxShadow: '0 4px 16px rgba(144, 19, 64, 0.12)',
-                transform: 'translateY(-2px)'
-              }
-            }}
-          >
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#901340', mb: 1.5, fontSize: '2.5rem' }}>
-              24/7
-            </Typography>
-            <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Real-time Monitoring
-            </Typography>
-          </Box>
-
-          <Box 
-            sx={{ 
-              textAlign: 'center',
-              p: 4,
-              minWidth: '280px',
-              background: '#ffffff',
-              borderRadius: 2,
-              border: '2px solid #ffcb25',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-              transition: 'all 0.3s ease',
-              '&:hover': {
-                boxShadow: '0 4px 16px rgba(255, 203, 37, 0.12)',
-                transform: 'translateY(-2px)'
-              }
-            }}
-          >
-            <Typography variant="h3" sx={{ fontWeight: 700, color: '#ffcb25', mb: 1.5, fontSize: '2.5rem' }}>
-              {impact ? `${impact.total_liters.toLocaleString(undefined, { maximumFractionDigits: 0 })} L` : '—'}
-            </Typography>
-            <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Harvested Lifetime
-            </Typography>
-          </Box>
-        </Box>
+        ))}
       </Box>
       </Box>
     </Box>

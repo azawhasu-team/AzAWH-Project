@@ -13,6 +13,13 @@ import Footer from './Footer';
 const ASU_MAROON = '#901340';
 const ASU_GOLDEN = '#ffcb25';
 
+// Single source of truth for status colors — previously hardcoded
+// independently (and inconsistently) across StationCard, the station
+// detail page, and the compare view.
+const STATUS_SUCCESS = '#2e7d32';
+const STATUS_WARNING = '#ed6c02';
+const STATUS_ERROR = '#c62828';
+
 const theme = createTheme({
   palette: {
     primary: {
@@ -27,6 +34,21 @@ const theme = createTheme({
       dark: '#d4a600',
       contrastText: '#000000',
     },
+    success: {
+      main: STATUS_SUCCESS,
+      light: '#e8f5e9',
+      contrastText: '#ffffff',
+    },
+    warning: {
+      main: STATUS_WARNING,
+      light: '#fff3e0',
+      contrastText: '#ffffff',
+    },
+    error: {
+      main: STATUS_ERROR,
+      light: '#ffebee',
+      contrastText: '#ffffff',
+    },
     background: {
       default: '#fafafa',
       paper: '#ffffff',
@@ -37,14 +59,20 @@ const theme = createTheme({
     },
   },
   typography: {
-    fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
+    fontFamily: '"Atkinson Hyperlegible", "Helvetica", "Arial", sans-serif',
+    h1: { fontFamily: '"Crimson Pro", serif', fontWeight: 700 },
+    h2: { fontFamily: '"Crimson Pro", serif', fontWeight: 700 },
+    h3: { fontFamily: '"Crimson Pro", serif', fontWeight: 600 },
     h4: {
+      fontFamily: '"Crimson Pro", serif',
       fontWeight: 700,
       color: ASU_MAROON,
     },
     h5: {
+      fontFamily: '"Crimson Pro", serif',
       fontWeight: 600,
     },
+    h6: { fontFamily: '"Crimson Pro", serif', fontWeight: 600 },
   },
   transitions: {
     duration: {

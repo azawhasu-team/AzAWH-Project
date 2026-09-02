@@ -12,11 +12,46 @@ import {
   TableHead,
   TableRow,
   Chip,
-  CircularProgress,
+  Skeleton,
   Alert,
 } from '@mui/material';
 import { apiClient, type StationInfo, type HourlyDataRow } from '@/lib/api-client';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
+
+/**
+ * A compact bar showing this station's value relative to the highest value
+ * in the column (not a pass/fail gauge against an invented target — there's
+ * no established "good" threshold for e.g. harvesting efficiency, so a
+ * red/yellow/green bullet chart would be fabricating a judgment the science
+ * doesn't support). The number is always rendered as text, never
+ * color-only, per standard chart-accessibility guidance.
+ */
+function MetricBar({
+  value,
+  max,
+  label,
+  color,
+}: {
+  value: number | null;
+  max: number;
+  label: string;
+  color: string;
+}) {
+  if (value == null) {
+    return <Typography sx={{ color: 'text.disabled', fontSize: '0.85rem' }}>—</Typography>;
+  }
+  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.4, minWidth: 120 }}>
+      <Typography sx={{ fontWeight: 700, fontSize: '0.9rem', fontVariantNumeric: 'tabular-nums' }}>
+        {label}
+      </Typography>
+      <Box sx={{ height: 6, borderRadius: 3, backgroundColor: 'rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+        <Box sx={{ height: '100%', width: `${pct}%`, borderRadius: 3, backgroundColor: color, transition: 'width 300ms ease' }} />
+      </Box>
+    </Box>
+  );
+}
 
 interface StationComparison {
   station: StationInfo;
@@ -27,6 +62,25 @@ interface StationComparison {
 }
 
 const WINDOW_DAYS = 7;
+
+// Same thresholds/labels/colors as the station detail page's Live Status
+// widget — one freshness vocabulary across the app, not a second one
+// invented for this page.
+function freshnessOf(lastReading: string | null | undefined) {
+  if (!lastReading) return { label: 'Waiting for data', color: '#9e9e9e' };
+  const ageSec = Math.max(0, (Date.now() - new Date(lastReading).getTime()) / 1000);
+  if (ageSec < 120) return { label: 'Live', color: '#2e7d32', ageSec };
+  if (ageSec < 600) return { label: 'Delayed', color: '#ed6c02', ageSec };
+  return { label: 'Not sending', color: '#c62828', ageSec };
+}
+
+function formatAge(ageSec: number | undefined): string {
+  if (ageSec == null) return '';
+  if (ageSec < 60) return `${Math.floor(ageSec)}s ago`;
+  if (ageSec < 3600) return `${Math.floor(ageSec / 60)}m ago`;
+  if (ageSec < 86400) return `${Math.floor(ageSec / 3600)}h ago`;
+  return `${Math.floor(ageSec / 86400)}d ago`;
+}
 
 // Ratio of 7-day totals, not an average of hourly percentages — same
 // principle as the backend's hourly efficiency formula (a mean-of-ratios
@@ -115,8 +169,21 @@ export default function ComparePage() {
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
-        <CircularProgress size={60} sx={{ color: '#901340' }} />
+      <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 6, maxWidth: '1200px', mx: 'auto' }}>
+        <Skeleton variant="text" width={280} height={48} sx={{ mx: 'auto', mb: 1 }} />
+        <Skeleton variant="text" width={460} height={28} sx={{ mx: 'auto', mb: 5 }} />
+        <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid rgba(0,0,0,0.08)', p: 2 }}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Box key={i} sx={{ display: 'flex', gap: 3, alignItems: 'center', py: 1.5 }}>
+              <Skeleton variant="text" width={200} height={32} />
+              <Skeleton variant="rounded" width={70} height={24} />
+              <Skeleton variant="rounded" width={120} height={36} sx={{ ml: 'auto' }} />
+              <Skeleton variant="rounded" width={120} height={36} />
+              <Skeleton variant="rounded" width={120} height={36} />
+              <Skeleton variant="text" width={90} height={32} />
+            </Box>
+          ))}
+        </Paper>
       </Box>
     );
   }
@@ -129,6 +196,10 @@ export default function ComparePage() {
     );
   }
 
+  const maxWater = Math.max(0, ...rows.map((r) => r.waterProducedL ?? 0));
+  const maxEfficiency = Math.max(0, ...rows.map((r) => r.efficiencyPct ?? 0));
+  const maxEnergyPerLiter = Math.max(0, ...rows.map((r) => r.energyPerLiterKWhL ?? 0));
+
   return (
     <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 6, maxWidth: '1200px', mx: 'auto' }}>
       <Typography variant="h4" sx={{ fontWeight: 700, color: '#191919', mb: 1, textAlign: 'center' }}>
@@ -137,6 +208,56 @@ export default function ComparePage() {
       <Typography variant="body1" sx={{ color: '#484848', mb: 5, textAlign: 'center' }}>
         Last {WINDOW_DAYS} days — water produced, harvesting efficiency, and energy cost across every station
       </Typography>
+
+      {rows.some((r) => r.waterProducedL != null) && (
+        <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid rgba(0,0,0,0.08)', p: { xs: 2.5, md: 3.5 }, mb: 4 }}>
+          <Typography sx={{ fontWeight: 700, fontSize: '1.05rem', mb: 0.25 }}>
+            Water Harvested
+          </Typography>
+          <Typography variant="body2" sx={{ color: 'text.secondary', mb: 3 }}>
+            Last {WINDOW_DAYS} days, by station
+          </Typography>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+            {rows
+              .filter((r) => r.waterProducedL != null)
+              .map(({ station, waterProducedL }) => {
+                const fresh = freshnessOf(station.metadata.last_reading);
+                const pct = maxWater > 0 ? Math.min(((waterProducedL ?? 0) / maxWater) * 100, 100) : 0;
+                return (
+                  <Box key={station.station_name}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 0.75 }}>
+                      <Box>
+                        <Typography sx={{ fontWeight: 600, fontSize: '0.95rem' }}>
+                          {station.station_name.replace(/^station_/, '')}
+                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, mt: 0.25 }}>
+                          <Box sx={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: fresh.color }} />
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            {fresh.label}{fresh.ageSec != null ? ` · ${formatAge(fresh.ageSec)}` : ''}
+                          </Typography>
+                        </Box>
+                      </Box>
+                      <Typography sx={{ fontWeight: 700, fontSize: '1.15rem', fontVariantNumeric: 'tabular-nums' }}>
+                        {waterProducedL!.toLocaleString(undefined, { maximumFractionDigits: 1 })} L
+                      </Typography>
+                    </Box>
+                    <Box sx={{ height: 10, borderRadius: 5, backgroundColor: 'rgba(0,0,0,0.06)', overflow: 'hidden' }}>
+                      <Box
+                        sx={{
+                          height: '100%',
+                          width: `${pct}%`,
+                          borderRadius: 5,
+                          background: 'linear-gradient(90deg, #901340, #b8336a)',
+                          transition: 'width 400ms ease',
+                        }}
+                      />
+                    </Box>
+                  </Box>
+                );
+              })}
+          </Box>
+        </Paper>
+      )}
 
       <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid rgba(0,0,0,0.08)', overflow: 'hidden' }}>
         <TableContainer>
@@ -163,30 +284,44 @@ export default function ComparePage() {
                   <TableCell>
                     <Chip
                       size="small"
+                      color={station.status === 'active' ? 'success' : 'error'}
                       label={station.status === 'active' ? 'Online' : 'Offline'}
                       sx={{
-                        backgroundColor: station.status === 'active' ? '#e8f5e9' : '#ffebee',
-                        color: station.status === 'active' ? '#2e7d32' : '#c62828',
+                        backgroundColor: station.status === 'active' ? 'success.light' : 'error.light',
+                        color: station.status === 'active' ? 'success.main' : 'error.main',
                         fontWeight: 600,
                       }}
                     />
                   </TableCell>
                   <TableCell align="right">
                     {waterProducedL != null ? (
-                      <Typography sx={{ fontWeight: 700, color: '#901340' }}>
-                        {waterProducedL.toLocaleString(undefined, { maximumFractionDigits: 2 })} L
-                      </Typography>
+                      <MetricBar
+                        value={waterProducedL}
+                        max={maxWater}
+                        label={`${waterProducedL.toLocaleString(undefined, { maximumFractionDigits: 2 })} L`}
+                        color="#901340"
+                      />
                     ) : (
-                      <Typography sx={{ color: 'text.disabled' }}>
+                      <Typography sx={{ color: 'text.disabled', fontSize: '0.85rem' }}>
                         {hasRecentData ? '—' : `No data in ${WINDOW_DAYS}d`}
                       </Typography>
                     )}
                   </TableCell>
                   <TableCell align="right">
-                    {efficiencyPct != null ? `${efficiencyPct.toFixed(1)}%` : '—'}
+                    <MetricBar
+                      value={efficiencyPct}
+                      max={maxEfficiency}
+                      label={efficiencyPct != null ? `${efficiencyPct.toFixed(1)}%` : '—'}
+                      color="#ffcb25"
+                    />
                   </TableCell>
                   <TableCell align="right">
-                    {energyPerLiterKWhL != null ? `${energyPerLiterKWhL.toFixed(2)} kWh/L` : '—'}
+                    <MetricBar
+                      value={energyPerLiterKWhL}
+                      max={maxEnergyPerLiter}
+                      label={energyPerLiterKWhL != null ? `${energyPerLiterKWhL.toFixed(2)} kWh/L` : '—'}
+                      color="#5c6bc0"
+                    />
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2">
