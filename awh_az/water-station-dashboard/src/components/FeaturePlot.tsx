@@ -226,6 +226,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
               <Tooltip
                 labelFormatter={formatTooltipLabel}
                 formatter={(value: number | string, name: string) => {
+                  if (value == null) return ['No reading this hour', name];
                   const unit = name === param2Name ? unit2 : unit1;
                   const formatted = typeof value === 'number' ? Number(value).toFixed(3) : value;
                   return [`${formatted}${unit ? ' ' + unit : ''}`, name];

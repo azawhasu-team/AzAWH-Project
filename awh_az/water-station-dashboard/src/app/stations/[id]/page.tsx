@@ -120,6 +120,16 @@ const AWH_DUCT_AREA_M2 = 0.18;
 // awh_az/backend/main.py's hourly aggregation.
 const WEIGHT_NOISE_FLOOR_G = 15;
 
+// Raw `energy` readings above this are known-corrupt, not real cumulative
+// kWh: per guides/KNOWN_ISSUES.md #7, station_testbed_1 has a stretch of
+// pre-2026-07-14 data written under a driver bug that produced values in
+// the 140,000+ range (confirmed as high as ~4.6M in the raw feed), and
+// that data is explicitly documented as unrecoverable garbage, not a unit
+// mismatch to correct for. These stations draw ~1-1.5kW continuously, so
+// even years of nonstop operation stays well under five figures of kWh —
+// 50,000 is a generous ceiling that only excludes data already known bad.
+const ENERGY_SANITY_CEILING_KWH = 50000;
+
 // Field categories for grouping
 const fieldCategories: Record<string, string> = {
   temperature: 'Air Conditions',
@@ -436,16 +446,30 @@ export default function StationDetails() {
       accWaterMap.set(r.timestamp, Math.round(runningWaterG / 1000 * 1000000) / 1000000);
     });
 
-    // Pre-compute incremental energy (kWh) per reading
-    const incEnergyMap = new Map<string, number>();
+    // Pre-compute incremental energy (kWh) per reading. `reading.energy` is
+    // already cumulative kWh at the source (RPi_USB_Package/read_power*.py
+    // convert on-device) — this used to divide by 1000 again on top of that,
+    // which silently undercounted every station's displayed energy by 1000x.
+    // Note: per guides/KNOWN_ISSUES.md #7, at least one station's driver
+    // (station_AquaPars@PowerPlant's deployed read_power.py) is confirmed
+    // still uploading raw Wh instead of kWh, and its raw energy register
+    // also wraps at ~65.5 kWh — this per-reading chart can't correct either
+    // of those (that needs the Pi-side fix described there); it's accurate
+    // for stations already uploading real kWh (e.g. station_testbed_1).
+    const incEnergyMap = new Map<string, number | null>();
     let prevE: number | null = null;
     filteredReadings.forEach(r => {
-      const e = typeof r.energy === 'number' ? r.energy : null;
+      const raw = typeof r.energy === 'number' ? r.energy : null;
+      // A known-corrupt reading (see ENERGY_SANITY_CEILING_KWH above) is
+      // treated the same as a missing one: skip it, don't fold it into a
+      // delta, and don't let it become the new "previous" pointer either —
+      // otherwise the reading right after it would show a bogus giant swing.
+      const e = raw !== null && raw <= ENERGY_SANITY_CEILING_KWH ? raw : null;
       if (e !== null) {
-        incEnergyMap.set(r.timestamp, prevE !== null ? Math.max(e - prevE, 0) / 1000 : 0);
+        incEnergyMap.set(r.timestamp, prevE !== null ? Math.max(e - prevE, 0) : 0);
         prevE = e;
       } else {
-        incEnergyMap.set(r.timestamp, 0);
+        incEnergyMap.set(r.timestamp, null);
       }
     });
 
@@ -488,7 +512,7 @@ export default function StationDetails() {
     });
 
     // Helper: resolve a field value, computing derived fields on the fly if needed
-    const resolveValue = (reading: StationReading, field: string): number => {
+    const resolveValue = (reading: StationReading, field: string): number | null => {
       if (field === 'abs_humidity_intake') {
         const t = reading.temperature, h = reading.humidity;
         return typeof t === 'number' && typeof h === 'number' ? computeAbsHumidity(t, h) : 0;
@@ -504,13 +528,17 @@ export default function StationDetails() {
         return incWaterMap.get(reading.timestamp) ?? 0;
       }
       if (field === 'incremental_energy_kWh') {
-        return incEnergyMap.get(reading.timestamp) ?? 0;
+        return incEnergyMap.get(reading.timestamp) ?? null;
       }
       if (field === 'harvesting_efficiency') {
         return effMap.get(reading.timestamp) ?? 0;
       }
       if (field === 'energy') {
-        return typeof reading.energy === 'number' ? reading.energy / 1000 : 0;
+        // Already kWh at the source — see the incEnergyMap note above.
+        // Values above ENERGY_SANITY_CEILING_KWH are known-corrupt (same
+        // note) and plotted as a gap rather than a wildly-wrong number.
+        if (typeof reading.energy !== 'number') return 0;
+        return reading.energy <= ENERGY_SANITY_CEILING_KWH ? reading.energy : null;
       }
       const v = reading[field as keyof StationReading];
       return typeof v === 'number' ? v : 0;
@@ -557,12 +585,16 @@ export default function StationDetails() {
 
         if (cancelled) return;
 
-        const points: ChartDataPoint[] = (resp.data || [])
-          .filter(r => typeof r.harvesting_efficiency_pct_hourly === 'number')
-          .map(r => ({
-            date: r.hour,
-            value: r.harvesting_efficiency_pct_hourly ?? 0,
-          }));
+        // Keep every hour (don't filter out nulls) so this chart's x-axis
+        // stays aligned with the water production / specific energy charts
+        // below, which are built from the same hourlyRows — a categorical
+        // axis otherwise spaces each chart's points independently, and
+        // different hours going null per-metric made the three charts
+        // visually "drift" out of sync with each other.
+        const points: ChartDataPoint[] = (resp.data || []).map(r => ({
+          date: r.hour,
+          value: typeof r.harvesting_efficiency_pct_hourly === 'number' ? r.harvesting_efficiency_pct_hourly : null,
+        }));
 
         setHourlyEfficiencyData(points);
         setHourlyRows(resp.data || []);
@@ -649,13 +681,13 @@ export default function StationDetails() {
   const latestHourlyRow = hourlyRows.length > 0 ? hourlyRows[hourlyRows.length - 1] : null;
 
   // Hourly chart series — one point per hour, still rendered as a connected line/area
-  // like the harvesting efficiency chart below.
+  // like the harvesting efficiency chart below. Every hour is kept (nulls
+  // included, not filtered out) so this stays x-axis-aligned with the other
+  // two hourly charts — see the matching note on hourlyEfficiencyData above.
   const hourlyEnergyPerLiterData: ChartDataPoint[] = hourlyRows
-    .filter(r => typeof r.energy_per_liter_kWh_L === 'number')
-    .map(r => ({ date: r.hour, value: r.energy_per_liter_kWh_L as number }));
+    .map(r => ({ date: r.hour, value: typeof r.energy_per_liter_kWh_L === 'number' ? r.energy_per_liter_kWh_L : null }));
   const hourlyWaterProductionData: ChartDataPoint[] = hourlyRows
-    .filter(r => typeof r.water_produced_L === 'number')
-    .map(r => ({ date: r.hour, value: r.water_produced_L as number }));
+    .map(r => ({ date: r.hour, value: typeof r.water_produced_L === 'number' ? r.water_produced_L : null }));
   
   return (
     <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 4, maxWidth: '1600px', mx: 'auto' }}>
@@ -1115,6 +1147,14 @@ export default function StationDetails() {
         </motion.div>
       ))}
 
+      {/* Water production, then specific energy consumption, then harvesting
+          efficiency — the first two are what you'd check to compare stations
+          or spot a problem "right now"; efficiency is the summary metric that
+          follows from them, so it reads better last. All three come from the
+          same hourlyRows fetch/loading state and share its x-axis exactly
+          (see the hourlyEfficiencyData/hourlyEnergyPerLiterData/
+          hourlyWaterProductionData definitions above) so they stay aligned
+          hour-for-hour when compared visually. */}
       {!readingsLoading && startDate && endDate && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -1124,16 +1164,16 @@ export default function StationDetails() {
           {hourlyEfficiencyLoading ? (
             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 280, gap: 2 }}>
               <CircularProgress size={32} />
-              <Typography color="text.secondary">Loading hourly harvesting efficiency…</Typography>
+              <Typography color="text.secondary">Loading hourly water production…</Typography>
             </Box>
           ) : (
             <FeaturePlot
-              data={hourlyEfficiencyData}
-              feature={'Efficiency - Harvesting Efficiency (Hourly)' as FeatureType}
+              data={hourlyWaterProductionData}
+              feature={'Water Production - Water Production Rate (Hourly)' as FeatureType}
               startDate={format(startDate, 'yyyy-MM-dd')}
               endDate={format(endDate, 'yyyy-MM-dd')}
-              paramNames={['Harvesting Efficiency (Hourly)']}
-              paramUnits={['%']}
+              paramNames={['Water Production Rate (Hourly)']}
+              paramUnits={['L/h']}
             />
           )}
         </motion.div>
@@ -1163,12 +1203,12 @@ export default function StationDetails() {
           transition={{ duration: 0.5, delay: 0.45 }}
         >
           <FeaturePlot
-            data={hourlyWaterProductionData}
-            feature={'Water Production - Water Production Rate (Hourly)' as FeatureType}
+            data={hourlyEfficiencyData}
+            feature={'Efficiency - Harvesting Efficiency (Hourly)' as FeatureType}
             startDate={format(startDate, 'yyyy-MM-dd')}
             endDate={format(endDate, 'yyyy-MM-dd')}
-            paramNames={['Water Production Rate (Hourly)']}
-            paramUnits={['L/h']}
+            paramNames={['Harvesting Efficiency (Hourly)']}
+            paramUnits={['%']}
           />
         </motion.div>
       )}
@@ -1359,12 +1399,21 @@ export default function StationDetails() {
                           row.accumulated_water_L = Math.round(accumulatedWaterG / 1000 * 1000000) / 1000000;
                           prevWeight = w;
                         }
-                        // Incremental energy (only positive deltas)
-                        const e = r.energy as number | null | undefined;
-                        if (typeof e === 'number') {
-                          row.energy = Math.round(e / 1000 * 1000000) / 1000000; // convert Wh → kWh
-                          row.incremental_energy_kWh = prevEnergy !== null ? Math.round(Math.max(e - prevEnergy, 0) / 1000 * 1000000) / 1000000 : 0;
+                        // Incremental energy (only positive deltas). r.energy is already
+                        // cumulative kWh at the source — see the incEnergyMap note above
+                        // in this file for why this no longer divides by 1000 again.
+                        // Values above ENERGY_SANITY_CEILING_KWH are known-corrupt (same
+                        // note) — exported as null rather than a wildly-wrong number, and
+                        // not used as the "previous" pointer for the next row's delta.
+                        const eRaw = r.energy as number | null | undefined;
+                        const e = typeof eRaw === 'number' && eRaw <= ENERGY_SANITY_CEILING_KWH ? eRaw : null;
+                        if (e !== null) {
+                          row.energy = e;
+                          row.incremental_energy_kWh = prevEnergy !== null ? Math.round(Math.max(e - prevEnergy, 0) * 1000000) / 1000000 : 0;
                           prevEnergy = e;
+                        } else if (typeof eRaw === 'number') {
+                          row.energy = null;
+                          row.incremental_energy_kWh = null;
                         }
                         // Harvesting efficiency
                         const vel = r.velocity as number | null | undefined;

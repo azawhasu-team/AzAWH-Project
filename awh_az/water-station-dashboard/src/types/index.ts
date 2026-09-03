@@ -66,6 +66,10 @@ export type FeatureType =
 
 export interface ChartDataPoint {
   date: string;
-  value: number;
+  // null is a real, distinct point: "this hour exists but had no valid
+  // reading for this field" — kept (not dropped) so every hourly chart
+  // shares the same set of x-axis points and stays time-aligned with
+  // the others, showing a gap in the line instead of compressing time.
+  value: number | null;
   value2?: number;
 }
