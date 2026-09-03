@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -392,19 +392,32 @@ export default function ComparePage() {
   const [chartHourly, setChartHourly] = useState<Record<string, HourlyDataRow[]>>({});
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
+  const [slowLoad, setSlowLoad] = useState(false);
+
+  // Caches the raw hourly rows fetched for the fixed WINDOW_DAYS table below,
+  // keyed by station name. The chart's default view covers the same window
+  // (rangePreset 'd' === WINDOW_DAYS), so we reuse this instead of paying for
+  // a second identical fetch — each hourly call can take 30s+ when the
+  // backend is on its Firestore fallback (Postgres unreachable from Render),
+  // so avoiding a redundant one roughly halves first-load time.
+  const initialHourlyRef = useRef<Record<string, HourlyDataRow[]> | null>(null);
 
   // Load the station list + the fixed-window bottom table once.
   useEffect(() => {
+    let slowTimer: ReturnType<typeof setTimeout>;
     async function load() {
       try {
         setLoading(true);
+        slowTimer = setTimeout(() => setSlowLoad(true), 6000);
         const stationList = filterVisibleStations(await apiClient.getStations());
         const startDate = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
+        const hourlyByStation: Record<string, HourlyDataRow[]> = {};
         const results = await Promise.all(
           stationList.map(async (station): Promise<StationComparison> => {
             try {
               const hourly = await apiClient.getHourlyAggregation(station.station_name, { start_date: startDate });
+              hourlyByStation[station.station_name] = hourly.data;
               const summary = summarizeWindow(hourly.data);
               return {
                 station,
@@ -416,6 +429,7 @@ export default function ComparePage() {
             } catch {
               // 404 (no readings in range) is expected for long-inactive stations —
               // show them as "no data," not as a page-level error.
+              hourlyByStation[station.station_name] = [];
               return {
                 station,
                 waterProducedL: null,
@@ -436,6 +450,7 @@ export default function ComparePage() {
           if (aOnline !== bOnline) return aOnline ? -1 : 1;
           return (b.waterProducedL ?? -1) - (a.waterProducedL ?? -1);
         });
+        initialHourlyRef.current = hourlyByStation;
         setStations(stationList);
         setTableRows(results);
         setError(null);
@@ -443,9 +458,12 @@ export default function ComparePage() {
         setError(err instanceof Error ? err.message : 'Failed to load station comparison');
       } finally {
         setLoading(false);
+        setSlowLoad(false);
+        clearTimeout(slowTimer);
       }
     }
     load();
+    return () => clearTimeout(slowTimer);
   }, []);
 
   const { rangeStartISO, rangeEndISO, rangeLabel } = useMemo(() => {
@@ -470,6 +488,15 @@ export default function ComparePage() {
   useEffect(() => {
     if (!rangeStartISO || !rangeEndISO || stations.length === 0) return;
     let cancelled = false;
+
+    // The default range matches the table's fixed WINDOW_DAYS fetch exactly —
+    // reuse that data instead of re-fetching the same hourly rows a second time.
+    if (rangePreset === '7d' && initialHourlyRef.current) {
+      setChartHourly(initialHourlyRef.current);
+      setChartError(null);
+      setChartLoading(false);
+      return;
+    }
 
     async function loadChart() {
       setChartLoading(true);
@@ -500,7 +527,7 @@ export default function ComparePage() {
     return () => {
       cancelled = true;
     };
-  }, [stations, rangeStartISO, rangeEndISO]);
+  }, [stations, rangeStartISO, rangeEndISO, rangePreset]);
 
   const activeMeasurement = MEASUREMENTS.find((m) => m.key === measurement)!;
 
@@ -584,7 +611,17 @@ export default function ComparePage() {
     return (
       <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 6, maxWidth: '1200px', mx: 'auto' }}>
         <Skeleton variant="text" width={280} height={48} sx={{ mx: 'auto', mb: 1 }} />
-        <Skeleton variant="text" width={460} height={28} sx={{ mx: 'auto', mb: 5 }} />
+        <Skeleton variant="text" width={460} height={28} sx={{ mx: 'auto', mb: slowLoad ? 1 : 5 }} />
+        {slowLoad && (
+          <Typography
+            variant="body2"
+            align="center"
+            sx={{ color: 'text.secondary', mb: 4 }}
+          >
+            Still loading — this can take up to a minute right now while the backend
+            recomputes station data without its usual fast database connection.
+          </Typography>
+        )}
         <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid rgba(0,0,0,0.08)', p: 2 }}>
           {Array.from({ length: 6 }).map((_, i) => (
             <Box key={i} sx={{ display: 'flex', gap: 3, alignItems: 'center', py: 1.5 }}>
