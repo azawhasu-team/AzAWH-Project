@@ -37,6 +37,7 @@ import {
   ComposedChart,
   Bar,
   ErrorBar,
+  LabelList,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -89,7 +90,7 @@ interface StationComparison {
   station: StationInfo;
   waterProducedL: number | null;
   lastEfficiencyPct: number | null;
-  lastEnergyConsumedKWh: number | null;
+  lastSpecificEnergyKWhPerL: number | null;
   hasRecentData: boolean;
 }
 
@@ -118,10 +119,12 @@ function formatAge(ageSec: number | undefined): string {
 // same principle as the backend's hourly efficiency formula (a mean-of-ratios
 // would let a handful of noisy near-zero-intake hours skew the result;
 // summing captured/available first and dividing once doesn't). Efficiency
-// and energy consumption below are "last data point" snapshots instead,
-// since the backend already computes both per-hour — no need to re-derive a
-// window ratio for them here. One energy concept ("consumption," in kWh)
-// throughout the page, rather than mixing it with a second "per liter" one.
+// and specific energy consumption below are "last data point" snapshots
+// instead, since the backend already computes both per-hour — no need to
+// re-derive a window ratio for them here. Specific energy consumption
+// (kWh per unit volume of water produced — kWh/L, kWh/gal, kWh/ac-ft) is the
+// standard way this quantity is expressed; the underlying value stored here
+// is always kWh/L, converted to the display unit only when rendered.
 function summarizeWindow(rows: HourlyDataRow[]) {
   let waterL = 0;
   let hasWater = false;
@@ -136,20 +139,20 @@ function summarizeWindow(rows: HourlyDataRow[]) {
   // takes its own most-recent non-null hour independently (one sensor being
   // out shouldn't blank out the other's latest reading).
   let lastEfficiencyPct: number | null = null;
-  let lastEnergyConsumedKWh: number | null = null;
-  for (let i = rows.length - 1; i >= 0 && (lastEfficiencyPct == null || lastEnergyConsumedKWh == null); i--) {
+  let lastSpecificEnergyKWhPerL: number | null = null;
+  for (let i = rows.length - 1; i >= 0 && (lastEfficiencyPct == null || lastSpecificEnergyKWhPerL == null); i--) {
     if (lastEfficiencyPct == null && rows[i].harvesting_efficiency_pct_hourly != null) {
       lastEfficiencyPct = rows[i].harvesting_efficiency_pct_hourly as number;
     }
-    if (lastEnergyConsumedKWh == null && rows[i].energy_consumed_kWh != null) {
-      lastEnergyConsumedKWh = rows[i].energy_consumed_kWh;
+    if (lastSpecificEnergyKWhPerL == null && rows[i].energy_per_liter_kWh_L != null) {
+      lastSpecificEnergyKWhPerL = rows[i].energy_per_liter_kWh_L;
     }
   }
 
   return {
     waterProducedL: hasWater ? waterL : null,
     lastEfficiencyPct,
-    lastEnergyConsumedKWh,
+    lastSpecificEnergyKWhPerL,
   };
 }
 
@@ -162,7 +165,7 @@ type RangePreset = '7d' | '30d' | '90d' | 'custom';
 const MEASUREMENTS: { key: Measurement; label: string; color: string; colorEnd: string; usesVolumeUnit: boolean; Icon: typeof WaterDrop }[] = [
   { key: 'total', label: 'Total water produced', color: '#901340', colorEnd: '#c94a76', usesVolumeUnit: true, Icon: WaterDrop },
   { key: 'production', label: 'Water production', color: '#901340', colorEnd: '#c94a76', usesVolumeUnit: true, Icon: WaterDrop },
-  { key: 'energy', label: 'Energy consumption', color: '#4a5bc4', colorEnd: '#7c8ae0', usesVolumeUnit: false, Icon: Bolt },
+  { key: 'energy', label: 'Specific energy consumption', color: '#4a5bc4', colorEnd: '#7c8ae0', usesVolumeUnit: true, Icon: Bolt },
   { key: 'efficiency', label: 'Harvesting efficiency', color: '#e0a800', colorEnd: '#ffd75c', usesVolumeUnit: false, Icon: Speed },
 ];
 
@@ -221,9 +224,25 @@ function convertLiters(valueL: number, unit: VolumeUnit): number {
   return valueL;
 }
 
+// Specific energy consumption is energy PER unit volume, so converting the
+// display unit multiplies rather than divides — going from kWh/L to kWh/gal
+// means each (larger) gallon costs more kWh, not fewer. The exact inverse
+// operation of convertLiters above.
+function convertSpecificEnergy(kWhPerLiter: number, unit: VolumeUnit): number {
+  if (unit === 'gal') return kWhPerLiter * LITERS_PER_GALLON;
+  if (unit === 'acre-ft') return kWhPerLiter * LITERS_PER_ACRE_FOOT;
+  return kWhPerLiter;
+}
+
 function formatMeasurementValue(value: number, measurement: Measurement, unit: VolumeUnit): string {
   if (measurement === 'efficiency') return `${value.toFixed(1)}%`;
-  if (measurement === 'energy') return `${value.toFixed(2)} kWh`;
+  if (measurement === 'energy') {
+    // kWh/L and kWh/gal are small fractions; kWh/ac-ft is enormous (an
+    // acre-foot is ~1.2 million liters) — scale precision to the unit so
+    // neither rounds to 0.00 nor prints a wall of decimals.
+    const maximumFractionDigits = unit === 'acre-ft' ? 0 : 3;
+    return `${value.toLocaleString(undefined, { maximumFractionDigits })} kWh/${UNIT_LABEL[unit]}`;
+  }
   const maximumFractionDigits = unit === 'acre-ft' ? 6 : 2;
   return `${value.toLocaleString(undefined, { maximumFractionDigits })} ${UNIT_LABEL[unit]}`;
 }
@@ -380,7 +399,7 @@ export default function ComparePage() {
                 station,
                 waterProducedL: summary.waterProducedL,
                 lastEfficiencyPct: summary.lastEfficiencyPct,
-                lastEnergyConsumedKWh: summary.lastEnergyConsumedKWh,
+                lastSpecificEnergyKWhPerL: summary.lastSpecificEnergyKWhPerL,
                 hasRecentData: hourly.data.length > 0,
               };
             } catch {
@@ -390,7 +409,7 @@ export default function ComparePage() {
                 station,
                 waterProducedL: null,
                 lastEfficiencyPct: null,
-                lastEnergyConsumedKWh: null,
+                lastSpecificEnergyKWhPerL: null,
                 hasRecentData: false,
               };
             }
@@ -480,9 +499,9 @@ export default function ComparePage() {
   // deviation, to show how much each station's hourly rate actually varies
   // — a sum has no "variation" to show, so it gets no error bar.
   const chartData: ChartPoint[] = useMemo(() => {
-    const fieldKey: 'water_produced_L' | 'energy_consumed_kWh' | 'harvesting_efficiency_pct_hourly' =
+    const fieldKey: 'water_produced_L' | 'energy_per_liter_kWh_L' | 'harvesting_efficiency_pct_hourly' =
       measurement === 'energy'
-        ? 'energy_consumed_kWh'
+        ? 'energy_per_liter_kWh_L'
         : measurement === 'efficiency'
         ? 'harvesting_efficiency_pct_hourly'
         : 'water_produced_L';
@@ -503,7 +522,8 @@ export default function ComparePage() {
       }
 
       const isVolume = measurement === 'total' || measurement === 'production';
-      const convert = (v: number) => (isVolume ? convertLiters(v, unit) : v);
+      const convert = (v: number) =>
+        isVolume ? convertLiters(v, unit) : measurement === 'energy' ? convertSpecificEnergy(v, unit) : v;
 
       if (measurement === 'total') {
         const sum = values.reduce((a, b) => a + b, 0);
@@ -528,7 +548,7 @@ export default function ComparePage() {
 
   const plottedData = chartData.filter((d) => d.hasData);
   const missingCount = chartData.length - plottedData.length;
-  const yUnitLabel = measurement === 'energy' ? 'kWh' : measurement === 'efficiency' ? '%' : UNIT_LABEL[unit];
+  const yUnitLabel = measurement === 'energy' ? `kWh/${UNIT_LABEL[unit]}` : measurement === 'efficiency' ? '%' : UNIT_LABEL[unit];
 
   const quickStats = useMemo(() => {
     const liveCount = tableRows.filter((r) => freshnessOf(r.station.metadata.last_reading).label === 'Live').length;
@@ -573,7 +593,7 @@ export default function ComparePage() {
 
   const maxWater = Math.max(0, ...tableRows.map((r) => r.waterProducedL ?? 0));
   const maxEfficiency = Math.max(0, ...tableRows.map((r) => r.lastEfficiencyPct ?? 0));
-  const maxEnergyConsumed = Math.max(0, ...tableRows.map((r) => r.lastEnergyConsumedKWh ?? 0));
+  const maxSpecificEnergy = Math.max(0, ...tableRows.map((r) => r.lastSpecificEnergyKWhPerL ?? 0));
   // tableRows is sorted online-first, so this is the boundary where a
   // divider row belongs — 0 or -1 (no offline stations at all) means skip it.
   const firstOfflineIndex = tableRows.findIndex((r) => r.station.status !== 'active');
@@ -604,7 +624,7 @@ export default function ComparePage() {
           Compare Stations
         </Typography>
         <Typography variant="body1" sx={{ color: '#484848', mb: 4, textAlign: 'center' }}>
-          Water produced, harvesting efficiency, and energy consumption across every station
+          Water produced, harvesting efficiency, and specific energy consumption across every station
         </Typography>
       </motion.div>
 
@@ -813,7 +833,17 @@ export default function ComparePage() {
                   />
                   <YAxis
                     yAxisId="left"
-                    tickFormatter={(v: number) => `${v.toLocaleString(undefined, { maximumFractionDigits: unit === 'acre-ft' ? 4 : 1 })} ${yUnitLabel}`}
+                    domain={[0, 'auto']}
+                    allowDataOverflow
+                    tickFormatter={(v: number) => {
+                      // Volume ticks need more decimals in the tiny acre-ft
+                      // unit; specific-energy ticks need the opposite — an
+                      // acre-foot is ~1.2M liters, so kWh/ac-ft is a large
+                      // number where extra decimals just add noise.
+                      const maximumFractionDigits =
+                        measurement === 'energy' ? (unit === 'acre-ft' ? 0 : 2) : unit === 'acre-ft' ? 4 : 1;
+                      return `${v.toLocaleString(undefined, { maximumFractionDigits })} ${yUnitLabel}`;
+                    }}
                     tick={{ fontSize: 11, fill: '#888' }}
                     axisLine={false}
                     tickLine={false}
@@ -851,6 +881,14 @@ export default function ComparePage() {
                     {measurement !== 'total' && (
                       <ErrorBar dataKey="std" width={6} strokeWidth={1.5} stroke="#333" direction="y" />
                     )}
+                    <LabelList
+                      dataKey="mean"
+                      position="top"
+                      formatter={(label: React.ReactNode) =>
+                        typeof label === 'number' ? formatMeasurementValue(label, measurement, unit) : ''
+                      }
+                      style={{ fontSize: 10, fill: '#666', fontWeight: 600 }}
+                    />
                   </Bar>
                   <Bar
                     yAxisId="right"
@@ -885,7 +923,7 @@ export default function ComparePage() {
       <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid rgba(0,0,0,0.08)', overflow: 'hidden' }}>
         <Box sx={{ px: { xs: 2.5, md: 3.5 }, pt: 2.5 }}>
           <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-            Water Produced totals the last {WINDOW_DAYS} days · Harvesting Efficiency and Energy Consumption show each station&apos;s latest hour
+            Water Produced totals the last {WINDOW_DAYS} days · Harvesting Efficiency and Specific Energy Consumption show each station&apos;s latest hour
           </Typography>
         </Box>
         <TableContainer>
@@ -896,12 +934,12 @@ export default function ComparePage() {
                 <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
                 <TableCell align="right" sx={{ fontWeight: 700 }}>Water Produced ({WINDOW_DAYS}d)</TableCell>
                 <TableCell align="right" sx={{ fontWeight: 700 }}>Harvesting Efficiency (latest)</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 700 }}>Energy Consumption (latest)</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700 }}>Specific Energy Consumption (latest)</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>Last Reading</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {tableRows.map(({ station, waterProducedL, lastEfficiencyPct, lastEnergyConsumedKWh, hasRecentData }, i) => (
+              {tableRows.map(({ station, waterProducedL, lastEfficiencyPct, lastSpecificEnergyKWhPerL, hasRecentData }, i) => (
                 <React.Fragment key={station.station_name}>
                   {i === firstOfflineIndex && firstOfflineIndex > 0 && (
                     <TableRow>
@@ -962,9 +1000,9 @@ export default function ComparePage() {
                   </TableCell>
                   <TableCell align="right">
                     <MetricBar
-                      value={lastEnergyConsumedKWh}
-                      max={maxEnergyConsumed}
-                      label={lastEnergyConsumedKWh != null ? `${lastEnergyConsumedKWh.toFixed(2)} kWh` : '—'}
+                      value={lastSpecificEnergyKWhPerL}
+                      max={maxSpecificEnergy}
+                      label={lastSpecificEnergyKWhPerL != null ? `${lastSpecificEnergyKWhPerL.toFixed(3)} kWh/L` : '—'}
                       color="#5c6bc0"
                     />
                   </TableCell>
