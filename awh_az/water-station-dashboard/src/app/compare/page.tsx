@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Typography,
@@ -14,9 +14,41 @@ import {
   Chip,
   Skeleton,
   Alert,
+  ToggleButton,
+  ToggleButtonGroup,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  type SelectChangeEvent,
 } from '@mui/material';
+import {
+  WaterDrop,
+  Bolt,
+  Speed,
+  SensorsRounded,
+  WifiTethering,
+  EmojiEvents,
+  CalendarMonth,
+  TuneRounded,
+} from '@mui/icons-material';
+import { motion } from 'framer-motion';
+import {
+  ComposedChart,
+  Bar,
+  ErrorBar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { format } from 'date-fns';
 import { apiClient, type StationInfo, type HourlyDataRow } from '@/lib/api-client';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
+import { filterVisibleStations } from '@/lib/hiddenStations';
 
 /**
  * A compact bar showing this station's value relative to the highest value
@@ -56,8 +88,8 @@ function MetricBar({
 interface StationComparison {
   station: StationInfo;
   waterProducedL: number | null;
-  efficiencyPct: number | null;
-  energyPerLiterKWhL: number | null;
+  lastEfficiencyPct: number | null;
+  lastEnergyConsumedKWh: number | null;
   hasRecentData: boolean;
 }
 
@@ -82,63 +114,273 @@ function formatAge(ageSec: number | undefined): string {
   return `${Math.floor(ageSec / 86400)}d ago`;
 }
 
-// Ratio of 7-day totals, not an average of hourly percentages — same
-// principle as the backend's hourly efficiency formula (a mean-of-ratios
+// Total is a ratio of window sums, not an average of hourly percentages —
+// same principle as the backend's hourly efficiency formula (a mean-of-ratios
 // would let a handful of noisy near-zero-intake hours skew the result;
-// summing captured/available first and dividing once doesn't).
-function summarizeHours(rows: HourlyDataRow[]) {
+// summing captured/available first and dividing once doesn't). Efficiency
+// and energy consumption below are "last data point" snapshots instead,
+// since the backend already computes both per-hour — no need to re-derive a
+// window ratio for them here. One energy concept ("consumption," in kWh)
+// throughout the page, rather than mixing it with a second "per liter" one.
+function summarizeWindow(rows: HourlyDataRow[]) {
   let waterL = 0;
   let hasWater = false;
-  let capturedG = 0;
-  let availableG = 0;
-  let energyKWh = 0;
-  let hasEnergy = false;
-
   for (const row of rows) {
     if (row.water_produced_L != null) {
       waterL += row.water_produced_L;
       hasWater = true;
     }
-    if (row.water_captured_g_hourly != null) capturedG += row.water_captured_g_hourly;
-    if (row.intake_available_water_g_hourly != null) availableG += row.intake_available_water_g_hourly;
-    if (row.energy_consumed_kWh != null) {
-      energyKWh += row.energy_consumed_kWh;
-      hasEnergy = true;
+  }
+
+  // Rows arrive chronologically ascending; scan from the end so each metric
+  // takes its own most-recent non-null hour independently (one sensor being
+  // out shouldn't blank out the other's latest reading).
+  let lastEfficiencyPct: number | null = null;
+  let lastEnergyConsumedKWh: number | null = null;
+  for (let i = rows.length - 1; i >= 0 && (lastEfficiencyPct == null || lastEnergyConsumedKWh == null); i--) {
+    if (lastEfficiencyPct == null && rows[i].harvesting_efficiency_pct_hourly != null) {
+      lastEfficiencyPct = rows[i].harvesting_efficiency_pct_hourly as number;
+    }
+    if (lastEnergyConsumedKWh == null && rows[i].energy_consumed_kWh != null) {
+      lastEnergyConsumedKWh = rows[i].energy_consumed_kWh;
     }
   }
 
-  const efficiencyPct = availableG > 0 ? Math.min((capturedG / availableG) * 100, 100) : null;
-  const energyPerLiterKWhL = hasEnergy && hasWater && waterL > 0 ? energyKWh / waterL : null;
-
   return {
     waterProducedL: hasWater ? waterL : null,
-    efficiencyPct,
-    energyPerLiterKWhL,
+    lastEfficiencyPct,
+    lastEnergyConsumedKWh,
   };
 }
 
+// --- Top panel: configurable bar chart -------------------------------------
+
+type Measurement = 'total' | 'production' | 'energy' | 'efficiency';
+type VolumeUnit = 'L' | 'gal' | 'acre-ft';
+type RangePreset = '7d' | '30d' | '90d' | 'custom';
+
+const MEASUREMENTS: { key: Measurement; label: string; color: string; colorEnd: string; usesVolumeUnit: boolean; Icon: typeof WaterDrop }[] = [
+  { key: 'total', label: 'Total water produced', color: '#901340', colorEnd: '#c94a76', usesVolumeUnit: true, Icon: WaterDrop },
+  { key: 'production', label: 'Water production', color: '#901340', colorEnd: '#c94a76', usesVolumeUnit: true, Icon: WaterDrop },
+  { key: 'energy', label: 'Energy consumption', color: '#4a5bc4', colorEnd: '#7c8ae0', usesVolumeUnit: false, Icon: Bolt },
+  { key: 'efficiency', label: 'Harvesting efficiency', color: '#e0a800', colorEnd: '#ffd75c', usesVolumeUnit: false, Icon: Speed },
+];
+
+// Small alpha-blended tint of a brand hex color, for chip/stat-tile backgrounds —
+// keeps every accent color tied to the same hue used for its bar/badge elsewhere
+// on the page instead of inventing a second palette.
+function tint(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// Pill-style ToggleButtonGroup themed to whichever accent color is active
+// (date range = blue, unit = the active measurement's color), consistent
+// with "color follows the entity" rather than a generic gray MUI default.
+function rangeToggleSx(color: string) {
+  return {
+    backgroundColor: 'white',
+    borderRadius: 2,
+    '& .MuiToggleButton-root': {
+      border: '1px solid rgba(0,0,0,0.1)',
+      fontWeight: 700,
+      fontSize: '0.78rem',
+      color: 'text.secondary',
+      px: 1.5,
+      '&.Mui-selected': {
+        backgroundColor: tint(color, 0.14),
+        color,
+        '&:hover': { backgroundColor: tint(color, 0.2) },
+      },
+    },
+  };
+}
+
+const RANGE_PRESET_DAYS: Record<Exclude<RangePreset, 'custom'>, number> = { '7d': 7, '30d': 30, '90d': 90 };
+
+// Absolute humidity at intake — the ambient moisture actually available to be
+// harvested. Shown as environmental context alongside whichever measurement
+// is selected, since water production and energy draw both depend on it. A
+// distinct hue outside the four measurement colors, since it's a different
+// kind of variable (a condition, not a harvest metric).
+const HUMIDITY_COLOR = '#00acc1';
+
+function formatHumidity(value: number): string {
+  return `${value.toFixed(1)} g/m³`;
+}
+
+const LITERS_PER_GALLON = 3.785411784;
+const LITERS_PER_ACRE_FOOT = 1233481.85;
+const UNIT_LABEL: Record<VolumeUnit, string> = { L: 'L', gal: 'gal', 'acre-ft': 'ac-ft' };
+
+function convertLiters(valueL: number, unit: VolumeUnit): number {
+  if (unit === 'gal') return valueL / LITERS_PER_GALLON;
+  if (unit === 'acre-ft') return valueL / LITERS_PER_ACRE_FOOT;
+  return valueL;
+}
+
+function formatMeasurementValue(value: number, measurement: Measurement, unit: VolumeUnit): string {
+  if (measurement === 'efficiency') return `${value.toFixed(1)}%`;
+  if (measurement === 'energy') return `${value.toFixed(2)} kWh`;
+  const maximumFractionDigits = unit === 'acre-ft' ? 6 : 2;
+  return `${value.toLocaleString(undefined, { maximumFractionDigits })} ${UNIT_LABEL[unit]}`;
+}
+
+interface ChartPoint {
+  stationName: string;
+  displayName: string;
+  mean: number | null;
+  std: number | null;
+  absHumidity: number | null;
+  hasData: boolean;
+}
+
+interface ChartTooltipProps {
+  active?: boolean;
+  payload?: { payload: ChartPoint }[];
+  measurement: Measurement;
+  unit: VolumeUnit;
+  color: string;
+  showHumidity?: boolean;
+}
+
+function ChartTooltip({ active, payload, measurement, unit, color, showHumidity }: ChartTooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+  const point = payload[0].payload;
+  if (point.mean == null) return null;
+  return (
+    <Box
+      sx={{
+        backgroundColor: 'rgba(255,255,255,0.98)',
+        border: '1px solid rgba(0,0,0,0.08)',
+        borderRadius: '12px',
+        boxShadow: '0 12px 32px rgba(0,0,0,0.16)',
+        padding: '12px 16px',
+        borderTop: `3px solid ${color}`,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+        <Box sx={{ width: 10, height: 10, borderRadius: '3px', backgroundColor: color, flexShrink: 0 }} />
+        <Typography sx={{ fontWeight: 800, fontSize: '1rem' }}>
+          {formatMeasurementValue(point.mean, measurement, unit)}
+        </Typography>
+      </Box>
+      {point.std != null && (
+        <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.25 }}>
+          ± {formatMeasurementValue(point.std, measurement, unit)} (1 std dev)
+        </Typography>
+      )}
+      {showHumidity && point.absHumidity != null && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.75 }}>
+          <Box sx={{ width: 10, height: 10, borderRadius: '3px', backgroundColor: HUMIDITY_COLOR, flexShrink: 0 }} />
+          <Typography variant="caption" sx={{ fontWeight: 700 }}>
+            {formatHumidity(point.absHumidity)} <Box component="span" sx={{ color: 'text.secondary', fontWeight: 500 }}>abs. humidity</Box>
+          </Typography>
+        </Box>
+      )}
+      <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5, fontWeight: 700 }}>
+        {point.displayName}
+      </Typography>
+    </Box>
+  );
+}
+
+function StatTile({
+  icon,
+  label,
+  value,
+  subLabel,
+  color,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  subLabel?: string;
+  color: string;
+}) {
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        borderRadius: 2.5,
+        border: '1px solid rgba(0,0,0,0.07)',
+        p: 2,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0.75,
+        transition: 'transform 200ms ease, box-shadow 200ms ease',
+        '&:hover': {
+          transform: 'translateY(-2px)',
+          boxShadow: `0 10px 24px ${tint(color, 0.16)}`,
+        },
+      }}
+    >
+      <Box
+        sx={{
+          width: 32,
+          height: 32,
+          borderRadius: '9px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: tint(color, 0.12),
+          color,
+        }}
+      >
+        {icon}
+      </Box>
+      <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.3, fontSize: '0.68rem' }}>
+        {label}
+      </Typography>
+      <Typography sx={{ fontWeight: 800, fontSize: '1.35rem', fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>
+        {value}
+      </Typography>
+      {subLabel && (
+        <Typography variant="caption" sx={{ color: 'text.disabled', fontWeight: 600 }}>
+          {subLabel}
+        </Typography>
+      )}
+    </Paper>
+  );
+}
+
 export default function ComparePage() {
-  const [rows, setRows] = useState<StationComparison[]>([]);
+  const [stations, setStations] = useState<StationInfo[]>([]);
+  const [tableRows, setTableRows] = useState<StationComparison[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Top panel controls
+  const [rangePreset, setRangePreset] = useState<RangePreset>('7d');
+  const [customStart, setCustomStart] = useState<Date | null>(null);
+  const [customEnd, setCustomEnd] = useState<Date | null>(null);
+  const [measurement, setMeasurement] = useState<Measurement>('total');
+  const [unit, setUnit] = useState<VolumeUnit>('L');
+
+  const [chartHourly, setChartHourly] = useState<Record<string, HourlyDataRow[]>>({});
+  const [chartLoading, setChartLoading] = useState(true);
+  const [chartError, setChartError] = useState<string | null>(null);
+
+  // Load the station list + the fixed-window bottom table once.
   useEffect(() => {
     async function load() {
       try {
         setLoading(true);
-        const stations = await apiClient.getStations();
+        const stationList = filterVisibleStations(await apiClient.getStations());
         const startDate = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
         const results = await Promise.all(
-          stations.map(async (station): Promise<StationComparison> => {
+          stationList.map(async (station): Promise<StationComparison> => {
             try {
               const hourly = await apiClient.getHourlyAggregation(station.station_name, { start_date: startDate });
-              const summary = summarizeHours(hourly.data);
+              const summary = summarizeWindow(hourly.data);
               return {
                 station,
                 waterProducedL: summary.waterProducedL,
-                efficiencyPct: summary.efficiencyPct,
-                energyPerLiterKWhL: summary.energyPerLiterKWhL,
+                lastEfficiencyPct: summary.lastEfficiencyPct,
+                lastEnergyConsumedKWh: summary.lastEnergyConsumedKWh,
                 hasRecentData: hourly.data.length > 0,
               };
             } catch {
@@ -147,16 +389,25 @@ export default function ComparePage() {
               return {
                 station,
                 waterProducedL: null,
-                efficiencyPct: null,
-                energyPerLiterKWhL: null,
+                lastEfficiencyPct: null,
+                lastEnergyConsumedKWh: null,
                 hasRecentData: false,
               };
             }
           })
         );
 
-        results.sort((a, b) => (b.waterProducedL ?? -1) - (a.waterProducedL ?? -1));
-        setRows(results);
+        // Online stations first (stable partition), then by water produced
+        // within each group — so an active station never gets buried below
+        // a wall of offline ones just because it produced less this window.
+        results.sort((a, b) => {
+          const aOnline = a.station.status === 'active';
+          const bOnline = b.station.status === 'active';
+          if (aOnline !== bOnline) return aOnline ? -1 : 1;
+          return (b.waterProducedL ?? -1) - (a.waterProducedL ?? -1);
+        });
+        setStations(stationList);
+        setTableRows(results);
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load station comparison');
@@ -166,6 +417,130 @@ export default function ComparePage() {
     }
     load();
   }, []);
+
+  const { rangeStartISO, rangeEndISO, rangeLabel } = useMemo(() => {
+    if (rangePreset === 'custom') {
+      if (!customStart || !customEnd) {
+        return { rangeStartISO: null, rangeEndISO: null, rangeLabel: 'Pick a custom range' };
+      }
+      return {
+        rangeStartISO: customStart.toISOString(),
+        rangeEndISO: customEnd.toISOString(),
+        rangeLabel: `${format(customStart, 'MMM d, yyyy')} – ${format(customEnd, 'MMM d, yyyy')}`,
+      };
+    }
+    const days = RANGE_PRESET_DAYS[rangePreset];
+    const end = new Date();
+    const start = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    return { rangeStartISO: start.toISOString(), rangeEndISO: end.toISOString(), rangeLabel: `Last ${days} days` };
+  }, [rangePreset, customStart, customEnd]);
+
+  // Re-fetch hourly data for the chart whenever the selected range changes.
+  // Deliberately independent of the bottom table's fixed WINDOW_DAYS fetch.
+  useEffect(() => {
+    if (!rangeStartISO || !rangeEndISO || stations.length === 0) return;
+    let cancelled = false;
+
+    async function loadChart() {
+      setChartLoading(true);
+      try {
+        const results = await Promise.all(
+          stations.map(async (station) => {
+            try {
+              const hourly = await apiClient.getHourlyAggregation(station.station_name, {
+                start_date: rangeStartISO!,
+                end_date: rangeEndISO!,
+              });
+              return [station.station_name, hourly.data] as const;
+            } catch {
+              return [station.station_name, []] as const;
+            }
+          })
+        );
+        if (cancelled) return;
+        setChartHourly(Object.fromEntries(results));
+        setChartError(null);
+      } catch (err) {
+        if (!cancelled) setChartError(err instanceof Error ? err.message : 'Failed to load chart data');
+      } finally {
+        if (!cancelled) setChartLoading(false);
+      }
+    }
+    loadChart();
+    return () => {
+      cancelled = true;
+    };
+  }, [stations, rangeStartISO, rangeEndISO]);
+
+  const activeMeasurement = MEASUREMENTS.find((m) => m.key === measurement)!;
+
+  // Total = sum of hourly values across the range (a running total, same
+  // quantity as the bottom table's Water Produced column). The other three
+  // measurements plot the mean of the hourly values +/- one standard
+  // deviation, to show how much each station's hourly rate actually varies
+  // — a sum has no "variation" to show, so it gets no error bar.
+  const chartData: ChartPoint[] = useMemo(() => {
+    const fieldKey: 'water_produced_L' | 'energy_consumed_kWh' | 'harvesting_efficiency_pct_hourly' =
+      measurement === 'energy'
+        ? 'energy_consumed_kWh'
+        : measurement === 'efficiency'
+        ? 'harvesting_efficiency_pct_hourly'
+        : 'water_produced_L';
+
+    return stations.map((station) => {
+      const displayName = station.station_name.replace(/^station_/, '');
+      const rows = chartHourly[station.station_name] || [];
+      const values = rows.map((r) => r[fieldKey]).filter((v): v is number => v != null);
+
+      // Mean absolute humidity at intake across the same hours — the ambient
+      // condition backing whatever measurement is plotted. Computed here
+      // (not fetched separately) since chartHourly already carries it.
+      const ahValues = rows.map((r) => r.abs_humidity_intake_mean).filter((v): v is number => v != null);
+      const absHumidity = ahValues.length > 0 ? ahValues.reduce((a, b) => a + b, 0) / ahValues.length : null;
+
+      if (values.length === 0) {
+        return { stationName: station.station_name, displayName, mean: null, std: null, absHumidity, hasData: false };
+      }
+
+      const isVolume = measurement === 'total' || measurement === 'production';
+      const convert = (v: number) => (isVolume ? convertLiters(v, unit) : v);
+
+      if (measurement === 'total') {
+        const sum = values.reduce((a, b) => a + b, 0);
+        return { stationName: station.station_name, displayName, mean: convert(sum), std: null, absHumidity, hasData: true };
+      }
+
+      const rawMean = values.reduce((a, b) => a + b, 0) / values.length;
+      const variance =
+        values.length > 1 ? values.reduce((acc, v) => acc + (v - rawMean) ** 2, 0) / (values.length - 1) : 0;
+      const rawStd = Math.sqrt(variance);
+
+      return {
+        stationName: station.station_name,
+        displayName,
+        mean: convert(rawMean),
+        std: convert(rawStd),
+        absHumidity,
+        hasData: true,
+      };
+    });
+  }, [stations, chartHourly, measurement, unit]);
+
+  const plottedData = chartData.filter((d) => d.hasData);
+  const missingCount = chartData.length - plottedData.length;
+  const yUnitLabel = measurement === 'energy' ? 'kWh' : measurement === 'efficiency' ? '%' : UNIT_LABEL[unit];
+
+  const quickStats = useMemo(() => {
+    const liveCount = tableRows.filter((r) => freshnessOf(r.station.metadata.last_reading).label === 'Live').length;
+    const reportingCount = tableRows.filter((r) => r.hasRecentData).length;
+    const totalWaterL = tableRows.reduce((sum, r) => sum + (r.waterProducedL ?? 0), 0);
+    const topPoint = plottedData.reduce<ChartPoint | null>((best, p) => {
+      if (p.mean == null) return best;
+      if (!best || best.mean == null || p.mean > best.mean) return p;
+      return best;
+    }, null);
+    return { liveCount, reportingCount, totalStations: tableRows.length, totalWaterL, topPoint };
+  }, [tableRows, plottedData]);
 
   if (loading) {
     return (
@@ -196,85 +571,355 @@ export default function ComparePage() {
     );
   }
 
-  const maxWater = Math.max(0, ...rows.map((r) => r.waterProducedL ?? 0));
-  const maxEfficiency = Math.max(0, ...rows.map((r) => r.efficiencyPct ?? 0));
-  const maxEnergyPerLiter = Math.max(0, ...rows.map((r) => r.energyPerLiterKWhL ?? 0));
+  const maxWater = Math.max(0, ...tableRows.map((r) => r.waterProducedL ?? 0));
+  const maxEfficiency = Math.max(0, ...tableRows.map((r) => r.lastEfficiencyPct ?? 0));
+  const maxEnergyConsumed = Math.max(0, ...tableRows.map((r) => r.lastEnergyConsumedKWh ?? 0));
+  // tableRows is sorted online-first, so this is the boundary where a
+  // divider row belongs — 0 or -1 (no offline stations at all) means skip it.
+  const firstOfflineIndex = tableRows.findIndex((r) => r.station.status !== 'active');
 
   return (
-    <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 6, maxWidth: '1200px', mx: 'auto' }}>
-      <Typography variant="h4" sx={{ fontWeight: 700, color: '#191919', mb: 1, textAlign: 'center' }}>
-        Compare Stations
-      </Typography>
-      <Typography variant="body1" sx={{ color: '#484848', mb: 5, textAlign: 'center' }}>
-        Last {WINDOW_DAYS} days — water produced, harvesting efficiency, and energy cost across every station
-      </Typography>
+    <Box
+      sx={{
+        px: { xs: 2, sm: 3, md: 4 },
+        py: 6,
+        maxWidth: '1200px',
+        mx: 'auto',
+        background: 'radial-gradient(1200px 400px at 50% -80px, rgba(144,19,64,0.05), transparent)',
+      }}
+    >
+      <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+        <Typography
+          variant="h4"
+          sx={{
+            fontWeight: 800,
+            mb: 1,
+            textAlign: 'center',
+            background: 'linear-gradient(90deg, #901340, #5c6bc0)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+          }}
+        >
+          Compare Stations
+        </Typography>
+        <Typography variant="body1" sx={{ color: '#484848', mb: 4, textAlign: 'center' }}>
+          Water produced, harvesting efficiency, and energy consumption across every station
+        </Typography>
+      </motion.div>
 
-      {rows.some((r) => r.waterProducedL != null) && (
-        <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid rgba(0,0,0,0.08)', p: { xs: 2.5, md: 3.5 }, mb: 4 }}>
-          <Typography sx={{ fontWeight: 700, fontSize: '1.05rem', mb: 0.25 }}>
-            Water Harvested
-          </Typography>
-          <Typography variant="body2" sx={{ color: 'text.secondary', mb: 3 }}>
-            Last {WINDOW_DAYS} days, by station
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-            {rows
-              .filter((r) => r.waterProducedL != null)
-              .map(({ station, waterProducedL }) => {
-                const fresh = freshnessOf(station.metadata.last_reading);
-                const pct = maxWater > 0 ? Math.min(((waterProducedL ?? 0) / maxWater) * 100, 100) : 0;
-                return (
-                  <Box key={station.station_name}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 0.75 }}>
-                      <Box>
-                        <Typography sx={{ fontWeight: 600, fontSize: '0.95rem' }}>
-                          {station.station_name.replace(/^station_/, '')}
-                        </Typography>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, mt: 0.25 }}>
-                          <Box sx={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: fresh.color }} />
-                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                            {fresh.label}{fresh.ageSec != null ? ` · ${formatAge(fresh.ageSec)}` : ''}
-                          </Typography>
-                        </Box>
-                      </Box>
-                      <Typography sx={{ fontWeight: 700, fontSize: '1.15rem', fontVariantNumeric: 'tabular-nums' }}>
-                        {waterProducedL!.toLocaleString(undefined, { maximumFractionDigits: 1 })} L
-                      </Typography>
-                    </Box>
-                    <Box sx={{ height: 10, borderRadius: 5, backgroundColor: 'rgba(0,0,0,0.06)', overflow: 'hidden' }}>
-                      <Box
-                        sx={{
-                          height: '100%',
-                          width: `${pct}%`,
-                          borderRadius: 5,
-                          background: 'linear-gradient(90deg, #901340, #b8336a)',
-                          transition: 'width 400ms ease',
-                        }}
-                      />
-                    </Box>
-                  </Box>
-                );
-              })}
+      {tableRows.length > 0 && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.05 }}>
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' },
+              gap: 2,
+              mb: 4,
+            }}
+          >
+            <StatTile
+              icon={<SensorsRounded sx={{ fontSize: 20 }} />}
+              label="Stations reporting"
+              value={`${quickStats.reportingCount} / ${quickStats.totalStations}`}
+              color="#1e88e5"
+            />
+            <StatTile
+              icon={<WifiTethering sx={{ fontSize: 20 }} />}
+              label="Live now"
+              value={String(quickStats.liveCount)}
+              color="#2e7d32"
+            />
+            <StatTile
+              icon={<WaterDrop sx={{ fontSize: 20 }} />}
+              label={`Total water (${WINDOW_DAYS}d)`}
+              value={`${quickStats.totalWaterL.toLocaleString(undefined, { maximumFractionDigits: 0 })} L`}
+              color="#901340"
+            />
+            <StatTile
+              icon={<EmojiEvents sx={{ fontSize: 20 }} />}
+              label={`Top · ${activeMeasurement.label}`}
+              value={quickStats.topPoint?.mean != null ? formatMeasurementValue(quickStats.topPoint.mean, measurement, unit) : '—'}
+              subLabel={quickStats.topPoint?.displayName}
+              color={activeMeasurement.color}
+            />
           </Box>
-        </Paper>
+        </motion.div>
       )}
 
+      {stations.length > 0 && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.1 }}>
+        <Paper
+          elevation={0}
+          sx={{
+            borderRadius: 3,
+            border: '1px solid rgba(0,0,0,0.08)',
+            p: { xs: 2.5, md: 3.5 },
+            mb: 4,
+            position: 'relative',
+            overflow: 'hidden',
+            '&::before': {
+              content: '""',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 4,
+              background: `linear-gradient(90deg, ${activeMeasurement.color}, ${activeMeasurement.colorEnd})`,
+              transition: 'background 300ms ease',
+            },
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.25 }}>
+            <Box
+              sx={{
+                width: 30,
+                height: 30,
+                borderRadius: '9px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: tint(activeMeasurement.color, 0.12),
+                color: activeMeasurement.color,
+                transition: 'background-color 300ms ease, color 300ms ease',
+              }}
+            >
+              <activeMeasurement.Icon sx={{ fontSize: 18 }} />
+            </Box>
+            <Typography sx={{ fontWeight: 700, fontSize: '1.05rem' }}>
+              Water Harvested
+            </Typography>
+          </Box>
+          <Typography variant="body2" sx={{ color: 'text.secondary', mb: 3, ml: 4.75 }}>
+            {activeMeasurement.label} · {rangeLabel} · by station
+          </Typography>
+
+          <Box
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 2,
+              alignItems: 'center',
+              mb: 3,
+              p: 2,
+              borderRadius: 2.5,
+              backgroundColor: 'rgba(0,0,0,0.02)',
+              border: '1px solid rgba(0,0,0,0.05)',
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <CalendarMonth sx={{ fontSize: 18, color: 'text.disabled' }} />
+              <ToggleButtonGroup
+                exclusive
+                size="small"
+                value={rangePreset}
+                onChange={(_, v: RangePreset | null) => v && setRangePreset(v)}
+                sx={rangeToggleSx('#1e88e5')}
+              >
+                <ToggleButton value="7d">7D</ToggleButton>
+                <ToggleButton value="30d">30D</ToggleButton>
+                <ToggleButton value="90d">90D</ToggleButton>
+                <ToggleButton value="custom">Custom</ToggleButton>
+              </ToggleButtonGroup>
+            </Box>
+
+            {rangePreset === 'custom' && (
+              <>
+                <DatePicker
+                  label="Start"
+                  value={customStart}
+                  onChange={(v) => setCustomStart(v)}
+                  slotProps={{ textField: { size: 'small', sx: { width: 160, backgroundColor: 'white', borderRadius: 1.5 } } }}
+                />
+                <DatePicker
+                  label="End"
+                  value={customEnd}
+                  onChange={(v) => setCustomEnd(v)}
+                  slotProps={{ textField: { size: 'small', sx: { width: 160, backgroundColor: 'white', borderRadius: 1.5 } } }}
+                />
+              </>
+            )}
+
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <TuneRounded sx={{ fontSize: 18, color: 'text.disabled' }} />
+              <FormControl size="small" sx={{ minWidth: 220 }}>
+                <InputLabel id="compare-measurement-label">Measurement</InputLabel>
+                <Select
+                  labelId="compare-measurement-label"
+                  label="Measurement"
+                  value={measurement}
+                  onChange={(e: SelectChangeEvent) => setMeasurement(e.target.value as Measurement)}
+                  sx={{ backgroundColor: 'white', borderRadius: 1.5 }}
+                >
+                  {MEASUREMENTS.map((m) => (
+                    <MenuItem key={m.key} value={m.key} sx={{ display: 'flex', gap: 1 }}>
+                      <m.Icon sx={{ fontSize: 17, color: m.color }} />
+                      {m.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+
+            {activeMeasurement.usesVolumeUnit && (
+              <ToggleButtonGroup
+                exclusive
+                size="small"
+                value={unit}
+                onChange={(_, v: VolumeUnit | null) => v && setUnit(v)}
+                sx={rangeToggleSx(activeMeasurement.color)}
+              >
+                <ToggleButton value="L">L</ToggleButton>
+                <ToggleButton value="gal">gal</ToggleButton>
+                <ToggleButton value="acre-ft">ac-ft</ToggleButton>
+              </ToggleButtonGroup>
+            )}
+
+          </Box>
+
+          {chartError ? (
+            <Alert severity="error">{chartError}</Alert>
+          ) : plottedData.length === 0 ? (
+            <Box sx={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Typography variant="body2" sx={{ color: 'text.disabled' }}>
+                {chartLoading ? 'Loading…' : 'No data for the selected range'}
+              </Typography>
+            </Box>
+          ) : (
+            <Box sx={{ width: '100%', height: { xs: 320, sm: 380, md: 420 }, opacity: chartLoading ? 0.5 : 1, transition: 'opacity 200ms ease' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart
+                  data={plottedData}
+                  margin={{ top: 16, right: 16, left: 8, bottom: plottedData.length > 6 ? 48 : 24 }}
+                  barCategoryGap="35%"
+                  barGap={4}
+                >
+                  <defs>
+                    <linearGradient id="compareBarGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={activeMeasurement.colorEnd} />
+                      <stop offset="100%" stopColor={activeMeasurement.color} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="rgba(0,0,0,0.06)" vertical={false} />
+                  <XAxis
+                    dataKey="displayName"
+                    interval={0}
+                    angle={plottedData.length > 6 ? -30 : 0}
+                    textAnchor={plottedData.length > 6 ? 'end' : 'middle'}
+                    height={plottedData.length > 6 ? 56 : 30}
+                    tick={{ fontSize: 12, fill: '#666' }}
+                    axisLine={{ stroke: '#e0e0e0' }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    yAxisId="left"
+                    tickFormatter={(v: number) => `${v.toLocaleString(undefined, { maximumFractionDigits: unit === 'acre-ft' ? 4 : 1 })} ${yUnitLabel}`}
+                    tick={{ fontSize: 11, fill: '#888' }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={90}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tickFormatter={(v: number) => `${v.toFixed(0)} g/m³`}
+                    tick={{ fontSize: 11, fill: HUMIDITY_COLOR }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={70}
+                  />
+                  <RechartsTooltip
+                    content={<ChartTooltip measurement={measurement} unit={unit} color={activeMeasurement.color} showHumidity />}
+                    cursor={{ fill: tint(activeMeasurement.color, 0.06) }}
+                  />
+                  <Legend
+                    wrapperStyle={{ fontSize: '0.78rem', paddingTop: 8 }}
+                    iconType="rect"
+                    formatter={(value: string) => <span style={{ color: '#484848' }}>{value}</span>}
+                  />
+                  <Bar
+                    yAxisId="left"
+                    dataKey="mean"
+                    name={activeMeasurement.label}
+                    fill="url(#compareBarGradient)"
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={28}
+                    animationDuration={500}
+                    animationEasing="ease-out"
+                    activeBar={{ fill: activeMeasurement.color, stroke: activeMeasurement.colorEnd, strokeWidth: 2 }}
+                  >
+                    {measurement !== 'total' && (
+                      <ErrorBar dataKey="std" width={6} strokeWidth={1.5} stroke="#333" direction="y" />
+                    )}
+                  </Bar>
+                  <Bar
+                    yAxisId="right"
+                    dataKey="absHumidity"
+                    name="Absolute humidity (intake)"
+                    fill={HUMIDITY_COLOR}
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={28}
+                    animationDuration={500}
+                    animationEasing="ease-out"
+                    activeBar={{ fill: HUMIDITY_COLOR, stroke: '#00838f', strokeWidth: 2 }}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </Box>
+          )}
+
+          <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 1 }}>
+            Right axis: absolute humidity at intake (g/m³) — independent scale, shown for environmental context only.
+          </Typography>
+
+          {missingCount > 0 && (
+            <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 1.5 }}>
+              {missingCount} station{missingCount === 1 ? '' : 's'} excluded — no data in this range.
+            </Typography>
+          )}
+        </Paper>
+        </motion.div>
+      )}
+
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.15 }}>
       <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+        <Box sx={{ px: { xs: 2.5, md: 3.5 }, pt: 2.5 }}>
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            Water Produced totals the last {WINDOW_DAYS} days · Harvesting Efficiency and Energy Consumption show each station&apos;s latest hour
+          </Typography>
+        </Box>
         <TableContainer>
           <Table>
             <TableHead>
-              <TableRow sx={{ backgroundColor: '#fafafa' }}>
+              <TableRow sx={{ background: 'linear-gradient(90deg, rgba(144,19,64,0.05), rgba(92,107,192,0.05))' }}>
                 <TableCell sx={{ fontWeight: 700 }}>Station</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 700 }}>Water Produced</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 700 }}>Harvesting Efficiency</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 700 }}>Energy / Liter</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700 }}>Water Produced ({WINDOW_DAYS}d)</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700 }}>Harvesting Efficiency (latest)</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700 }}>Energy Consumption (latest)</TableCell>
                 <TableCell sx={{ fontWeight: 700 }}>Last Reading</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {rows.map(({ station, waterProducedL, efficiencyPct, energyPerLiterKWhL, hasRecentData }) => (
-                <TableRow key={station.station_name} hover>
+              {tableRows.map(({ station, waterProducedL, lastEfficiencyPct, lastEnergyConsumedKWh, hasRecentData }, i) => (
+                <React.Fragment key={station.station_name}>
+                  {i === firstOfflineIndex && firstOfflineIndex > 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} sx={{ py: 1, backgroundColor: 'rgba(0,0,0,0.03)', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
+                        <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', fontSize: '0.7rem' }}>
+                          Offline
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  <TableRow
+                    hover
+                    sx={{
+                      backgroundColor: i % 2 === 1 ? 'rgba(0,0,0,0.015)' : 'transparent',
+                      borderLeft: `3px solid ${station.status === 'active' ? '#2e7d32' : 'transparent'}`,
+                      transition: 'background-color 150ms ease',
+                    }}
+                  >
                   <TableCell>
                     <Typography sx={{ fontWeight: 600, fontSize: '0.9rem' }}>{station.station_name}</Typography>
                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
@@ -309,17 +954,17 @@ export default function ComparePage() {
                   </TableCell>
                   <TableCell align="right">
                     <MetricBar
-                      value={efficiencyPct}
+                      value={lastEfficiencyPct}
                       max={maxEfficiency}
-                      label={efficiencyPct != null ? `${efficiencyPct.toFixed(1)}%` : '—'}
+                      label={lastEfficiencyPct != null ? `${lastEfficiencyPct.toFixed(1)}%` : '—'}
                       color="#ffcb25"
                     />
                   </TableCell>
                   <TableCell align="right">
                     <MetricBar
-                      value={energyPerLiterKWhL}
-                      max={maxEnergyPerLiter}
-                      label={energyPerLiterKWhL != null ? `${energyPerLiterKWhL.toFixed(2)} kWh/L` : '—'}
+                      value={lastEnergyConsumedKWh}
+                      max={maxEnergyConsumed}
+                      label={lastEnergyConsumedKWh != null ? `${lastEnergyConsumedKWh.toFixed(2)} kWh` : '—'}
                       color="#5c6bc0"
                     />
                   </TableCell>
@@ -329,13 +974,26 @@ export default function ComparePage() {
                         ? formatPhoenixMonthDayTime(new Date(station.metadata.last_reading))
                         : 'Never'}
                     </Typography>
+                    {(() => {
+                      const fresh = freshnessOf(station.metadata.last_reading);
+                      return (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, mt: 0.25 }}>
+                          <Box sx={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: fresh.color }} />
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            {fresh.label}{fresh.ageSec != null ? ` · ${formatAge(fresh.ageSec)}` : ''}
+                          </Typography>
+                        </Box>
+                      );
+                    })()}
                   </TableCell>
-                </TableRow>
+                  </TableRow>
+                </React.Fragment>
               ))}
             </TableBody>
           </Table>
         </TableContainer>
       </Paper>
+      </motion.div>
     </Box>
   );
 }
