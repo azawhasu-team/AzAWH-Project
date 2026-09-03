@@ -38,6 +38,7 @@ import {
   Bar,
   ErrorBar,
   LabelList,
+  Scatter,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -252,6 +253,7 @@ interface ChartPoint {
   displayName: string;
   mean: number | null;
   std: number | null;
+  latest: number | null;
   absHumidity: number | null;
   hasData: boolean;
 }
@@ -290,6 +292,15 @@ function ChartTooltip({ active, payload, measurement, unit, color, showHumidity 
         <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.25 }}>
           ± {formatMeasurementValue(point.std, measurement, unit)} (1 std dev)
         </Typography>
+      )}
+      {point.latest != null && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5 }}>
+          <Box sx={{ width: 14, height: 2, backgroundColor: '#1a1a1a', flexShrink: 0 }} />
+          <Typography variant="caption" sx={{ fontWeight: 700 }}>
+            {formatMeasurementValue(point.latest, measurement, unit)}{' '}
+            <Box component="span" sx={{ color: 'text.secondary', fontWeight: 500 }}>latest hour</Box>
+          </Typography>
+        </Box>
       )}
       {showHumidity && point.absHumidity != null && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.75 }}>
@@ -518,7 +529,7 @@ export default function ComparePage() {
       const absHumidity = ahValues.length > 0 ? ahValues.reduce((a, b) => a + b, 0) / ahValues.length : null;
 
       if (values.length === 0) {
-        return { stationName: station.station_name, displayName, mean: null, std: null, absHumidity, hasData: false };
+        return { stationName: station.station_name, displayName, mean: null, std: null, latest: null, absHumidity, hasData: false };
       }
 
       const isVolume = measurement === 'total' || measurement === 'production';
@@ -526,20 +537,27 @@ export default function ComparePage() {
         isVolume ? convertLiters(v, unit) : measurement === 'energy' ? convertSpecificEnergy(v, unit) : v;
 
       if (measurement === 'total') {
+        // A sum-over-the-period has no "latest single hour" worth comparing
+        // it against — that comparison only makes sense for a rate/ratio.
         const sum = values.reduce((a, b) => a + b, 0);
-        return { stationName: station.station_name, displayName, mean: convert(sum), std: null, absHumidity, hasData: true };
+        return { stationName: station.station_name, displayName, mean: convert(sum), std: null, latest: null, absHumidity, hasData: true };
       }
 
       const rawMean = values.reduce((a, b) => a + b, 0) / values.length;
       const variance =
         values.length > 1 ? values.reduce((acc, v) => acc + (v - rawMean) ** 2, 0) / (values.length - 1) : 0;
       const rawStd = Math.sqrt(variance);
+      // rows (and therefore values, mapped/filtered in the same order) arrive
+      // chronologically ascending, so the last element is the most recent
+      // non-null hour — the "right now" reading, vs. the bar's period mean.
+      const rawLatest = values[values.length - 1];
 
       return {
         stationName: station.station_name,
         displayName,
         mean: convert(rawMean),
         std: convert(rawStd),
+        latest: convert(rawLatest),
         absHumidity,
         hasData: true,
       };
@@ -810,7 +828,7 @@ export default function ComparePage() {
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
                   data={plottedData}
-                  margin={{ top: 16, right: 16, left: 8, bottom: plottedData.length > 6 ? 48 : 24 }}
+                  margin={{ top: 28, right: 16, left: 8, bottom: plottedData.length > 6 ? 48 : 24 }}
                   barCategoryGap="35%"
                   barGap={4}
                 >
@@ -833,7 +851,12 @@ export default function ComparePage() {
                   />
                   <YAxis
                     yAxisId="left"
-                    domain={[0, 'auto']}
+                    // 18% headroom above the tallest bar (or its error-bar top,
+                    // whichever is greater) — without it, a bar near the domain
+                    // max leaves no room for its value label, which gets clipped
+                    // by the chart's own bounding box instead of just crowding
+                    // the plot area.
+                    domain={[0, (dataMax: number) => dataMax * 1.18]}
                     allowDataOverflow
                     tickFormatter={(v: number) => {
                       // Volume ticks need more decimals in the tiny acre-ft
@@ -890,6 +913,36 @@ export default function ComparePage() {
                       style={{ fontSize: 10, fill: '#666', fontWeight: 600 }}
                     />
                   </Bar>
+                  {measurement !== 'total' && (
+                    // The bar (mean) answers "how does this station compare to
+                    // the others over the period"; this tick answers "is it
+                    // currently at, above, or below its own average right now"
+                    // — a station whose tick sits well below its bar top is
+                    // underperforming its own recent average, which a bar
+                    // showing only the mean would hide.
+                    <Scatter
+                      yAxisId="left"
+                      dataKey="latest"
+                      name="Latest hour"
+                      legendType="line"
+                      fill="#1a1a1a"
+                      shape={(props: { cx?: number; cy?: number }) => {
+                        const { cx, cy } = props;
+                        if (cx == null || cy == null) return <g />;
+                        return (
+                          <line
+                            x1={cx - 14}
+                            x2={cx + 14}
+                            y1={cy}
+                            y2={cy}
+                            stroke="#1a1a1a"
+                            strokeWidth={3}
+                            strokeLinecap="round"
+                          />
+                        );
+                      }}
+                    />
+                  )}
                   <Bar
                     yAxisId="right"
                     dataKey="absHumidity"
@@ -908,6 +961,7 @@ export default function ComparePage() {
 
           <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 1 }}>
             Right axis: absolute humidity at intake (g/m³) — independent scale, shown for environmental context only.
+            {measurement !== 'total' && ' The black tick on each bar is that station’s latest hour — compare it to the bar (the period average) to see whether a station is currently running above or below its own norm.'}
           </Typography>
 
           {missingCount > 0 && (
