@@ -12,9 +12,9 @@ import { filterVisibleStations } from '@/lib/hiddenStations';
 // whatever count is present and reflows naturally as more come online.
 const stationGridSx = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 340px))',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 260px))',
   justifyContent: 'center',
-  gap: 3,
+  gap: 2.5,
   width: '100%',
 } as const;
 

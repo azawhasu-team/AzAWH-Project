@@ -52,7 +52,7 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
     >
       <CardMedia
         component="img"
-        height="200"
+        height="120"
         image="/station-placeholder.svg"
         alt="Station photo coming soon"
         sx={{
@@ -60,15 +60,15 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
           borderBottom: '3px solid #1e88e5'
         }}
       />
-      <CardContent sx={{ flexGrow: 1, p: 3 }}>
-        <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2} gap={1}>
-          <Typography 
-            variant="body1" 
-            component="h2" 
+      <CardContent sx={{ flexGrow: 1, p: 2 }}>
+        <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={1} gap={1}>
+          <Typography
+            variant="body1"
+            component="h2"
             sx={{
               color: '#1e88e5',
               fontWeight: 700,
-              fontSize: '0.95rem',
+              fontSize: '0.85rem',
               flex: 1,
               minWidth: 0,
               wordBreak: 'break-word',
@@ -80,53 +80,55 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
             label={station.status.toUpperCase()}
             color={getStatusColor(station.status)}
             size="small"
-            icon={<CircleIcon sx={{ fontSize: 14 }} />}
+            icon={<CircleIcon sx={{ fontSize: 12 }} />}
             sx={{
               fontWeight: 600,
-              fontSize: '0.75rem',
+              fontSize: '0.68rem',
+              height: 22,
               flexShrink: 0,
             }}
           />
         </Box>
-        
-        <Typography 
-          variant="body2" 
-          color="text.secondary" 
+
+        <Typography
+          variant="body2"
+          color="text.secondary"
           sx={{
-            mb: 1.5,
+            mb: 1,
             fontWeight: 600,
-            color: '#555'
+            color: '#555',
+            fontSize: '0.8rem',
           }}
         >
           📍 {station.location || 'Location Unknown'}
         </Typography>
-        
 
-        <Typography 
-          variant="body2" 
+
+        <Typography
+          variant="body2"
           color="text.secondary"
           sx={{
-            lineHeight: 1.7,
-            mb: 1.5,
+            lineHeight: 1.5,
             color: '#666',
-            fontSize: '0.875rem'
+            fontSize: '0.78rem'
           }}
         >
           Atmospheric water harvesting station utilizing advanced condensation technology to extract moisture from ambient air.
         </Typography>
       </CardContent>
-      
-      <CardActions sx={{ p: 2, pt: 0 }}>
-        <Button 
-          size="medium" 
-          variant="contained" 
-          startIcon={<InfoIcon />}
+
+      <CardActions sx={{ p: 1.5, pt: 0 }}>
+        <Button
+          size="small"
+          variant="contained"
+          startIcon={<InfoIcon sx={{ fontSize: 16 }} />}
           fullWidth
           sx={{
             backgroundColor: '#1e88e5',
             color: 'white',
             fontWeight: 600,
-            py: 1,
+            fontSize: '0.8rem',
+            py: 0.6,
             '&:hover': {
               backgroundColor: '#1565c0',
               transform: 'translateY(-2px)',
