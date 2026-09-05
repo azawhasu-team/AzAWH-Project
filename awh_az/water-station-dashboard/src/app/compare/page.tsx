@@ -545,7 +545,7 @@ export default function ComparePage() {
         : 'water_produced_L';
 
     return stations.map((station) => {
-      const displayName = station.station_name.replace(/^station_/, '');
+      const displayName = station.display_name || station.station_name.replace(/^station_/, '');
       const rows = chartHourly[station.station_name] || [];
       const values = rows.map((r) => r[fieldKey]).filter((v): v is number => v != null);
 
@@ -1050,7 +1050,7 @@ export default function ComparePage() {
                     }}
                   >
                   <TableCell>
-                    <Typography sx={{ fontWeight: 600, fontSize: '0.9rem' }}>{station.station_name}</Typography>
+                    <Typography sx={{ fontWeight: 600, fontSize: '0.9rem' }}>{station.display_name || station.station_name}</Typography>
                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                       {station.location || 'Arizona, USA'}
                     </Typography>

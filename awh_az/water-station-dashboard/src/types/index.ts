@@ -6,6 +6,7 @@ export interface Station {
   image?: string;
   description?: string;
   units?: string[];  // Array of unit names for this station
+  hidden?: boolean;
 }
 
 export interface StationData {

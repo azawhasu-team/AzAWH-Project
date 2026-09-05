@@ -74,3 +74,49 @@ export async function verifySessionToken(token: string | undefined): Promise<boo
   const expectedSig = await hmacHex(`${nonce}.${expStr}`, secret);
   return timingSafeEqual(sig, expectedSig);
 }
+
+// ---------------------------------------------------------------------------
+// Admin gate — layered on TOP of the site session above, not a replacement
+// for it. Knowing the site password alone isn't enough to reach /admin; this
+// is one extra shared passphrase (not a second username), checked the same
+// timing-safe way and signed into its own cookie with its own secret so it
+// can be rotated (ADMIN_SESSION_SECRET) independently of the site session.
+// ---------------------------------------------------------------------------
+export const ADMIN_AUTH_COOKIE = 'awh_admin_session';
+const ADMIN_SESSION_TTL_SECONDS = 60 * 60 * 8; // 8 hours — shorter-lived than the site session
+
+export async function verifyAdminPassphrase(passphrase: string): Promise<boolean> {
+  const expected = process.env.ADMIN_PASSPHRASE;
+  if (!expected) return false; // fail closed if not configured
+
+  const [inputHash, expectedHash] = await Promise.all([
+    sha256Hex(passphrase),
+    sha256Hex(expected),
+  ]);
+  return timingSafeEqual(inputHash, expectedHash);
+}
+
+export async function createAdminSessionToken(): Promise<string | null> {
+  const secret = process.env.ADMIN_SESSION_SECRET;
+  if (!secret) return null; // fail closed if not configured
+
+  const nonce = crypto.randomUUID();
+  const exp = Date.now() + ADMIN_SESSION_TTL_SECONDS * 1000;
+  const payload = `${nonce}.${exp}`;
+  const sig = await hmacHex(payload, secret);
+  return `${payload}.${sig}`;
+}
+
+export async function verifyAdminSessionToken(token: string | undefined): Promise<boolean> {
+  const secret = process.env.ADMIN_SESSION_SECRET;
+  if (!secret || !token) return false;
+
+  const [nonce, expStr, sig] = token.split('.');
+  if (!nonce || !expStr || !sig) return false;
+
+  const exp = Number(expStr);
+  if (!Number.isFinite(exp) || exp < Date.now()) return false;
+
+  const expectedSig = await hmacHex(`${nonce}.${expStr}`, secret);
+  return timingSafeEqual(sig, expectedSig);
+}

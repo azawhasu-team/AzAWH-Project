@@ -42,6 +42,10 @@ export interface StationInfo {
   location?: string | null;
   status: string;
   metadata: StationMetadata;
+  display_name?: string | null;
+  description?: string | null;
+  image_url?: string | null;
+  hidden?: boolean;
 }
 
 export interface ReadingsResponse {
@@ -80,6 +84,7 @@ export interface StationImpact {
   total_liters: number;
   readings_processed: number;
   updated_at?: string | null;
+  hidden?: boolean;
 }
 
 export interface ImpactResponse {

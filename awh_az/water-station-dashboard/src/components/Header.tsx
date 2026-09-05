@@ -150,8 +150,25 @@ export default function Header() {
             </Button>
           </Link>
           
-          <MuiLink 
-            href="https://azawh.asu.edu/" 
+          <Link href="/admin/stations" passHref style={{ textDecoration: 'none' }}>
+            <Button
+              sx={{
+                color: 'text.primary',
+                textTransform: 'none',
+                fontSize: { xs: '0.875rem', md: '1rem' },
+                fontWeight: 500,
+                '&:hover': {
+                  backgroundColor: 'rgba(144, 19, 64, 0.08)',
+                  color: 'primary.main',
+                },
+              }}
+            >
+              Admin
+            </Button>
+          </Link>
+
+          <MuiLink
+            href="https://azawh.asu.edu/"
             target="_blank"
             rel="noopener noreferrer"
             sx={{

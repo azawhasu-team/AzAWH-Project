@@ -53,8 +53,8 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
       <CardMedia
         component="img"
         height="120"
-        image="/station-placeholder.svg"
-        alt="Station photo coming soon"
+        image={station.image || '/station-placeholder.svg'}
+        alt={station.image ? `${station.name} photo` : 'Station photo coming soon'}
         sx={{
           objectFit: 'cover',
           borderBottom: '3px solid #1e88e5'
@@ -113,7 +113,8 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
             fontSize: '0.78rem'
           }}
         >
-          Atmospheric water harvesting station utilizing advanced condensation technology to extract moisture from ambient air.
+          {station.description ||
+            'Atmospheric water harvesting station utilizing advanced condensation technology to extract moisture from ambient air.'}
         </Typography>
       </CardContent>
 

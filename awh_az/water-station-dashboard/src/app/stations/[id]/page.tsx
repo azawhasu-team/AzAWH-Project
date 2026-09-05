@@ -744,11 +744,11 @@ export default function StationDetails() {
           }}
         >
         <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 4, alignItems: 'center' }}>
-          {/* Station Image — placeholder until real deployment photos are provided */}
+          {/* Station Image — admin-uploaded via /admin/stations, falls back to the placeholder */}
           <Box
             component="img"
-            src="/station-placeholder.svg"
-            alt="Station photo coming soon"
+            src={station.image_url || '/station-placeholder.svg'}
+            alt={station.image_url ? `${station.display_name || station.station_name} photo` : 'Station photo coming soon'}
             sx={{
               width: { xs: '100%', md: '450px' },
               height: { xs: '250px', md: '320px' },
@@ -769,7 +769,7 @@ export default function StationDetails() {
                   fontSize: { xs: '1.75rem', sm: '2.25rem', md: '2.75rem' }
                 }}
               >
-                {station.station_name}
+                {station.display_name || station.station_name}
               </Typography>
               <Chip
                 icon={<CircleIcon sx={{ fontSize: 16 }} />}
@@ -791,8 +791,8 @@ export default function StationDetails() {
             </Typography>
             
             <Typography variant="body1" paragraph sx={{ lineHeight: 1.8, mb: 3, opacity: 0.9 }}>
-              This state-of-the-art atmospheric water harvesting station represents the cutting edge of sustainable water technology. 
-              Utilizing advanced condensation and filtration systems, it extracts clean, potable water directly from the ambient air.
+              {station.description ||
+                'This state-of-the-art atmospheric water harvesting station represents the cutting edge of sustainable water technology. Utilizing advanced condensation and filtration systems, it extracts clean, potable water directly from the ambient air.'}
             </Typography>
             
             <Box sx={{ 

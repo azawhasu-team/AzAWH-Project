@@ -46,10 +46,12 @@ export default function StationsPage() {
   const stationCards = stations
     .map((station) => ({
       id: station.station_name,
-      name: station.station_name,
+      name: station.display_name || station.station_name,
       location: station.location || 'Arizona, USA',
       status: (station.status === 'active' ? 'Online' : 'Offline') as 'Online' | 'Offline',
       units: [station.unit],
+      image: station.image_url || undefined,
+      description: station.description || undefined,
     }))
     .sort((a, b) => (a.status === b.status ? 0 : a.status === 'Online' ? -1 : 1));
   const onlineStationCards = stationCards.filter((s) => s.status === 'Online');
