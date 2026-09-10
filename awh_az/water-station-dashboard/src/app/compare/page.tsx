@@ -161,7 +161,7 @@ function summarizeWindow(rows: HourlyDataRow[]) {
 
 type Measurement = 'total' | 'production' | 'energy' | 'efficiency';
 type VolumeUnit = 'L' | 'gal' | 'acre-ft';
-type RangePreset = '7d' | '30d' | '90d' | 'custom';
+type RangePreset = '7d' | '30d' | '90d' | 'all' | 'custom';
 
 const MEASUREMENTS: { key: Measurement; label: string; color: string; colorEnd: string; usesVolumeUnit: boolean; Icon: typeof WaterDrop }[] = [
   { key: 'total', label: 'Total water produced', color: '#901340', colorEnd: '#c94a76', usesVolumeUnit: true, Icon: WaterDrop },
@@ -202,7 +202,7 @@ function rangeToggleSx(color: string) {
   };
 }
 
-const RANGE_PRESET_DAYS: Record<Exclude<RangePreset, 'custom'>, number> = { '7d': 7, '30d': 30, '90d': 90 };
+const RANGE_PRESET_DAYS: Record<Exclude<RangePreset, 'custom' | 'all'>, number> = { '7d': 7, '30d': 30, '90d': 90 };
 
 // Absolute humidity at intake — the ambient moisture actually available to be
 // harvested. Shown as environmental context alongside whichever measurement
@@ -466,27 +466,38 @@ export default function ComparePage() {
     return () => clearTimeout(slowTimer);
   }, []);
 
-  const { rangeStartISO, rangeEndISO, rangeLabel } = useMemo(() => {
+  // rangeStartISO/rangeEndISO of null means "no filter" — for 'all' that's
+  // deliberate (fetch full history), but for 'custom' with nothing picked
+  // yet it means "not ready to fetch". rangeReady disambiguates the two so
+  // the effect below doesn't mistake an unset custom picker for "all time".
+  const { rangeStartISO, rangeEndISO, rangeLabel, rangeReady } = useMemo(() => {
     if (rangePreset === 'custom') {
       if (!customStart || !customEnd) {
-        return { rangeStartISO: null, rangeEndISO: null, rangeLabel: 'Pick a custom range' };
+        return { rangeStartISO: null, rangeEndISO: null, rangeLabel: 'Pick a custom range', rangeReady: false };
       }
       return {
         rangeStartISO: customStart.toISOString(),
         rangeEndISO: customEnd.toISOString(),
         rangeLabel: `${format(customStart, 'MMM d, yyyy')} – ${format(customEnd, 'MMM d, yyyy')}`,
+        rangeReady: true,
       };
+    }
+    if (rangePreset === 'all') {
+      // No start/end filter at all — each station's full history, so a
+      // station that's been idle for the last 90 days still shows its
+      // real lifetime numbers instead of "no data in range".
+      return { rangeStartISO: null, rangeEndISO: null, rangeLabel: 'All time', rangeReady: true };
     }
     const days = RANGE_PRESET_DAYS[rangePreset];
     const end = new Date();
     const start = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    return { rangeStartISO: start.toISOString(), rangeEndISO: end.toISOString(), rangeLabel: `Last ${days} days` };
+    return { rangeStartISO: start.toISOString(), rangeEndISO: end.toISOString(), rangeLabel: `Last ${days} days`, rangeReady: true };
   }, [rangePreset, customStart, customEnd]);
 
   // Re-fetch hourly data for the chart whenever the selected range changes.
   // Deliberately independent of the bottom table's fixed WINDOW_DAYS fetch.
   useEffect(() => {
-    if (!rangeStartISO || !rangeEndISO || stations.length === 0) return;
+    if (!rangeReady || stations.length === 0) return;
     let cancelled = false;
 
     // The default range matches the table's fixed WINDOW_DAYS fetch exactly —
@@ -505,8 +516,8 @@ export default function ComparePage() {
           stations.map(async (station) => {
             try {
               const hourly = await apiClient.getHourlyAggregation(station.station_name, {
-                start_date: rangeStartISO!,
-                end_date: rangeEndISO!,
+                start_date: rangeStartISO ?? undefined,
+                end_date: rangeEndISO ?? undefined,
               });
               return [station.station_name, hourly.data] as const;
             } catch {
@@ -527,7 +538,7 @@ export default function ComparePage() {
     return () => {
       cancelled = true;
     };
-  }, [stations, rangeStartISO, rangeEndISO, rangePreset]);
+  }, [stations, rangeStartISO, rangeEndISO, rangePreset, rangeReady]);
 
   const activeMeasurement = MEASUREMENTS.find((m) => m.key === measurement)!;
 
@@ -794,6 +805,7 @@ export default function ComparePage() {
                 <ToggleButton value="7d">7D</ToggleButton>
                 <ToggleButton value="30d">30D</ToggleButton>
                 <ToggleButton value="90d">90D</ToggleButton>
+                <ToggleButton value="all">All</ToggleButton>
                 <ToggleButton value="custom">Custom</ToggleButton>
               </ToggleButtonGroup>
             </Box>

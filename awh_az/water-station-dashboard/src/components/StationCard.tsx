@@ -14,6 +14,7 @@ import {
 import { Circle as CircleIcon, Info as InfoIcon } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
 import { Station } from '@/types';
+import { slugify } from '@/lib/slug';
 
 interface StationCardProps {
   station: Station;
@@ -22,8 +23,11 @@ interface StationCardProps {
 const StationCard: React.FC<StationCardProps> = ({ station }) => {
   const router = useRouter();
 
+  // station.name is already display_name || station_name (see stations/page.tsx),
+  // so this reads as the station's name in the URL instead of its raw,
+  // Firestore-key-shaped station_name.
   const handleViewDetails = () => {
-    router.push(`/stations/${encodeURIComponent(station.id)}`);
+    router.push(`/stations/${encodeURIComponent(slugify(station.name))}`);
   };
 
   const getStatusColor = (status: string) => {

@@ -15,9 +15,14 @@ import {
   Skeleton,
   Chip,
   Divider,
+  Collapse,
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import DownloadIcon from '@mui/icons-material/Download';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { apiClient, type StationInfo } from '@/lib/api-client';
+import StationDataDownload from '@/components/StationDataDownload';
 
 interface EditState {
   display_name: string;
@@ -34,6 +39,7 @@ export default function AdminStationsPage() {
   const [edits, setEdits] = useState<Record<string, EditState>>({});
   const [saveStatus, setSaveStatus] = useState<Record<string, SaveStatus>>({});
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
+  const [downloadOpen, setDownloadOpen] = useState<Record<string, boolean>>({});
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
@@ -270,6 +276,25 @@ export default function AdminStationsPage() {
                   </Box>
                 </Box>
               </Box>
+
+              <Divider sx={{ my: 2.5 }} />
+
+              <Button
+                size="small"
+                startIcon={<DownloadIcon fontSize="small" />}
+                endIcon={downloadOpen[station.station_name] ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                onClick={() =>
+                  setDownloadOpen((prev) => ({ ...prev, [station.station_name]: !prev[station.station_name] }))
+                }
+                sx={{ textTransform: 'none', fontWeight: 600 }}
+              >
+                Download data
+              </Button>
+              <Collapse in={!!downloadOpen[station.station_name]} unmountOnExit>
+                <Box sx={{ mt: 2 }}>
+                  <StationDataDownload station={station} />
+                </Box>
+              </Collapse>
             </CardContent>
           </Card>
         );

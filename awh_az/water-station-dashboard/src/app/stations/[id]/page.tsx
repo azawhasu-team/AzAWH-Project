@@ -23,143 +23,33 @@ import {
 } from '@mui/material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-import { ArrowBack, Circle as CircleIcon, CalendarMonth, Tune, Download } from '@mui/icons-material';
+import { ArrowBack, Circle as CircleIcon, CalendarMonth, Tune } from '@mui/icons-material';
 import { format } from 'date-fns';
 import FeaturePlot from '@/components/FeaturePlot';
-import Papa from 'papaparse';
 import { apiClient, type StationInfo, type StationReading, type ReadingsResponse, type HourlyAggregationResponse, type HourlyDataRow } from '@/lib/api-client';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 import { FeatureType, ChartDataPoint, StationData } from '@/types';
-
-// Magnus formula helper for absolute humidity (g/m³)
-function computeAbsHumidity(tempC: number, rhPct: number): number {
-  const es = 6.112 * Math.exp((17.67 * tempC) / (tempC + 243.5));
-  return (216.7 * (rhPct / 100) * es) / (273.15 + tempC);
-}
-
-// Normalize anemometer velocity to m/s before using it in physical formulas.
-function velocityToMps(velocity: number, unit?: string | null): number {
-  const u = (unit || '').toLowerCase();
-  if (u === 'km/h') return velocity / 3.6;
-  if (u === 'mph') return velocity / 2.23694;
-  if (u === 'ft/s') return velocity / 3.28084;
-  if (u === 'ft/m') return velocity / 196.850394;
-  return velocity; // default and 'm/s'
-}
-
-// Field mapping: API field names to display names
-const fieldDisplayNames: Record<string, string> = {
-  temperature: 'Temperature (Intake)',
-  humidity: 'Relative Humidity (Intake)',
-  velocity: 'Air Velocity (Intake)',
-  abs_humidity_intake: 'Absolute Humidity (Intake)',
-  outtake_temperature: 'Temperature (Outtake)',
-  outtake_humidity: 'Relative Humidity (Outtake)',
-  outtake_velocity: 'Air Velocity (Outtake)',
-  abs_humidity_outtake: 'Absolute Humidity (Outtake)',
-  flow_lmin: 'Flow Rate',
-  flow_hz: 'Flow Frequency',
-  flow_total: 'Total Flow',
-  weight: 'Weight',
-  accumulated_water_L: 'Cumulative Water Production',
-  incremental_water_g: 'Incremental Water Production',
-  power: 'Power',
-  voltage: 'Voltage',
-  current: 'Current',
-  energy: 'Energy',
-  incremental_energy_kWh: 'Incremental Energy',
-  pump_status: 'Pump Status',
-  harvesting_efficiency: 'Harvesting Efficiency',
-};
-
-// Units for each field — shown on chart Y-axis labels and tooltips
-const fieldUnits: Record<string, string> = {
-  temperature: '°C',
-  humidity: '%',
-  velocity: 'm/s',
-  abs_humidity_intake: 'g/m³',
-  outtake_temperature: '°C',
-  outtake_humidity: '%',
-  outtake_velocity: 'm/s',
-  abs_humidity_outtake: 'g/m³',
-  flow_lmin: 'L/min',
-  flow_hz: 'Hz',
-  flow_total: 'L',
-  weight: 'g',
-  accumulated_water_L: 'L',
-  incremental_water_g: 'g',
-  power: 'W',
-  voltage: 'V',
-  current: 'A',
-  energy: 'kWh',
-  incremental_energy_kWh: 'kWh',
-  pump_status: '',
-  harvesting_efficiency: '%',
-};
-
-// Computed fields — derived client-side from base readings
-const COMPUTED_FIELDS = new Set([
-  'abs_humidity_intake',
-  'abs_humidity_outtake',
-  'accumulated_water_L',
-  'incremental_water_g',
-  'incremental_energy_kWh',
-  'harvesting_efficiency',
-]);
-
-// AWH device duct cross-sectional area (m²) — from hardware spec (273.60 sq in = 0.18 m²)
-const AWH_DUCT_AREA_M2 = 0.18;
-
-// Minimum weight increment (g) counted as real water production, not balance jitter.
-// Some stations' readings wobble ±5-25g between consecutive readings with no real
-// accumulating trend (confirmed on station_testbed_1: true net change over 2 days was
-// ~170g, but summing every positive wobble gave ~9000g — a ~50x overcount). 15g sits
-// well below the real per-step jumps seen on a working station's pump-drain cycles
-// (station_AquaPars@PowerPlant's positive deltas are ~99.7% above this floor) while
-// filtering out most of the noise-only jitter. Keep in sync with the same constant in
-// awh_az/backend/main.py's hourly aggregation.
-const WEIGHT_NOISE_FLOOR_G = 15;
-
-// Raw `energy` readings above this are known-corrupt, not real cumulative
-// kWh: per guides/KNOWN_ISSUES.md #7, station_testbed_1 has a stretch of
-// pre-2026-07-14 data written under a driver bug that produced values in
-// the 140,000+ range (confirmed as high as ~4.6M in the raw feed), and
-// that data is explicitly documented as unrecoverable garbage, not a unit
-// mismatch to correct for. These stations draw ~1-1.5kW continuously, so
-// even years of nonstop operation stays well under five figures of kWh —
-// 50,000 is a generous ceiling that only excludes data already known bad.
-const ENERGY_SANITY_CEILING_KWH = 50000;
-
-// Field categories for grouping
-const fieldCategories: Record<string, string> = {
-  temperature: 'Air Conditions',
-  humidity: 'Air Conditions',
-  velocity: 'Air Conditions',
-  abs_humidity_intake: 'Air Conditions',
-  outtake_temperature: 'Air Conditions',
-  outtake_humidity: 'Air Conditions',
-  outtake_velocity: 'Air Conditions',
-  abs_humidity_outtake: 'Air Conditions',
-  flow_lmin: 'Water Production',
-  flow_hz: 'Water Production',
-  flow_total: 'Water Production',
-  weight: 'Water Production',
-  accumulated_water_L: 'Water Production',
-  incremental_water_g: 'Water Production',
-  harvesting_efficiency: 'Efficiency',
-  power: 'Power Consumption',
-  voltage: 'Power Consumption',
-  current: 'Power Consumption',
-  energy: 'Power Consumption',
-  incremental_energy_kWh: 'Power Consumption',
-  pump_status: 'System',
-};
+import {
+  fieldDisplayNames,
+  fieldUnits,
+  fieldCategories,
+  AWH_DUCT_AREA_M2,
+  WEIGHT_NOISE_FLOOR_G,
+  ENERGY_SANITY_CEILING_KWH,
+  computeAbsHumidity,
+  velocityToMps,
+} from '@/lib/stationFields';
+import { slugify } from '@/lib/slug';
 
 export default function StationDetails() {
   const params = useParams();
   const router = useRouter();
-  const stationName = decodeURIComponent(params.id as string);
-  
+  // The route segment is a slug of the station's name (see StationCard), not
+  // its real station_name — resolved back via the stations list below before
+  // any API call is made.
+  const routeSlug = decodeURIComponent(params.id as string);
+  const [stationName, setStationName] = useState<string | null>(null);
+
   // API data states
   const [station, setStation] = useState<StationInfo | null>(null);
   const [readings, setReadings] = useState<StationReading[]>([]);
@@ -180,13 +70,8 @@ export default function StationDetails() {
   const [dateDialogOpen, setDateDialogOpen] = useState(false);
   const [paramDialogOpen, setParamDialogOpen] = useState(false);
 
-  // Download states
-  const [rawDownloadFields, setRawDownloadFields] = useState<string[]>([]);
-  const [rawDownloading, setRawDownloading] = useState(false);
-  const [hourlyDownloading, setHourlyDownloading] = useState(false);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [downloadWarning, setDownloadWarning] = useState<string | null>(null);
   const [rangeTruncated, setRangeTruncated] = useState(false);
+  const [dateRangeError, setDateRangeError] = useState<string | null>(null);
   const [readingsLoadedSoFar, setReadingsLoadedSoFar] = useState(0);
   const [hourlyEfficiencyLoading, setHourlyEfficiencyLoading] = useState(false);
   const [hourlyEfficiencyData, setHourlyEfficiencyData] = useState<ChartDataPoint[]>([]);
@@ -211,28 +96,27 @@ export default function StationDetails() {
     async function fetchData() {
       try {
         setLoading(true);
-        
-        // Fetch station metadata and initial readings in parallel
-        const [stations, readingsResponse] = await Promise.all([
-          apiClient.getStations(),
-          apiClient.getStationReadings(stationName, { limit: 1000 }),
-        ]);
-        const foundStation = stations.find(s => s.station_name === stationName);
-        
+
+        // Resolve the route slug back to a real station_name first — it's
+        // needed before any other endpoint can be called. Matches against
+        // both the slugified display name and the slugified raw station_name,
+        // so links built before this change (or without a display_name set)
+        // still resolve.
+        const stations = await apiClient.getStations();
+        const foundStation = stations.find(
+          s => slugify(s.display_name || s.station_name) === routeSlug || slugify(s.station_name) === routeSlug
+        );
+
         if (!foundStation) {
           setError('Station not found');
           return;
         }
-        
+
+        setStationName(foundStation.station_name);
         setStation(foundStation);
         setAvailableFields(foundStation.metadata.available_fields);
-        // Pre-select all fields for raw download (Firestore fields + computed fields)
-        const computedFieldList = Array.from(COMPUTED_FIELDS);
-        setRawDownloadFields([
-          ...foundStation.metadata.available_fields.filter(f => fieldDisplayNames[f]),
-          ...computedFieldList,
-        ]);
-        
+
+        const readingsResponse = await apiClient.getStationReadings(foundStation.station_name, { limit: 1000 });
         setReadings(readingsResponse.data);
         
         // Auto-set date range from actual data
@@ -269,7 +153,7 @@ export default function StationDetails() {
     }
 
     fetchData();
-  }, [stationName]);
+  }, [routeSlug]);
 
   // Handle mounting
   React.useEffect(() => {
@@ -280,11 +164,13 @@ export default function StationDetails() {
   // chart data — so a field engineer can watch it advance and confirm the station
   // is actively uploading, matching the station's own cloud-upload cadence.
   useEffect(() => {
+    if (!stationName) return;
+    const currentStationName = stationName;
     let cancelled = false;
 
     async function fetchLiveReading() {
       try {
-        const resp = await apiClient.getStationReadings(stationName, { limit: 1 });
+        const resp = await apiClient.getStationReadings(currentStationName, { limit: 1 });
         if (cancelled) return;
         if (resp.data.length > 0) {
           setLiveReading(resp.data[0]);
@@ -315,7 +201,7 @@ export default function StationDetails() {
   const handleDateApply = async () => {
     setDateDialogOpen(false);
     
-    if (!tempStartDate || !tempEndDate) return;
+    if (!tempStartDate || !tempEndDate || !stationName) return;
 
     // Show spinner; keep old chart visible until new data arrives
     setReadingsLoading(true);
@@ -336,7 +222,7 @@ export default function StationDetails() {
       setRangeTruncated(truncated);
     } catch (err) {
       console.error('Failed to fetch readings for date range:', err);
-      setDownloadError(
+      setDateRangeError(
         err instanceof Error
           ? `Couldn't load readings for that date range: ${err.message}`
           : "Couldn't load readings for that date range. Please try again."
@@ -570,7 +456,7 @@ export default function StationDetails() {
     let cancelled = false;
 
     async function fetchHourlyEfficiency() {
-      if (!startDate || !endDate) {
+      if (!startDate || !endDate || !stationName) {
         setHourlyEfficiencyData([]);
         setHourlyRows([]);
         return;
@@ -677,8 +563,26 @@ export default function StationDetails() {
   const periodEnergyPerLiter = periodTotalWaterL > 0 ? periodTotalEnergyKWh / periodTotalWaterL : null;
 
   // Most recent hour's water production rate — for Live Status, distinct from the
-  // period total above.
-  const latestHourlyRow = hourlyRows.length > 0 ? hourlyRows[hourlyRows.length - 1] : null;
+  // period total above. Scans backward for the latest hour with a non-null
+  // value instead of only checking the very last bucket: a weight sensor
+  // that missed one hour's delta shouldn't blank out an otherwise-recent
+  // reading from a few hours earlier — same "last non-null wins"  pattern
+  // the Compare page's summarizeWindow() already uses for this exact reason.
+  let latestWaterProducedL: number | null = null;
+  let latestWaterProducedHour: string | null = null;
+  for (let i = hourlyRows.length - 1; i >= 0; i--) {
+    if (hourlyRows[i].water_produced_L != null) {
+      latestWaterProducedL = hourlyRows[i].water_produced_L as number;
+      latestWaterProducedHour = hourlyRows[i].hour;
+      break;
+    }
+  }
+  // Flag it as stale once it's more than 2 hours old (one missed hour is
+  // normal sensor jitter; beyond that the reading is old enough that
+  // presenting it as unlabeled "current" would be misleading).
+  const latestWaterProducedIsStale =
+    latestWaterProducedHour != null &&
+    Date.now() - new Date(latestWaterProducedHour).getTime() > 2 * 60 * 60 * 1000;
 
   // Hourly chart series — one point per hour, still rendered as a connected line/area
   // like the harvesting efficiency chart below. Every hour is kept (nulls
@@ -887,12 +791,22 @@ export default function StationDetails() {
           {liveReading && (
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(auto-fit, minmax(140px, 1fr))' }, gap: 2 }}>
               {[
-                { key: 'water_total', label: 'Total Water Produced', value: hourlyRows.length > 0 ? periodTotalWaterL : null, unit: 'L', decimals: 2, requires: ['weight'] },
-                { key: 'water_per_hour', label: 'Water Production', value: latestHourlyRow?.water_produced_L ?? null, unit: 'L/h', decimals: 2, requires: ['weight'] },
-                { key: 'humidity', label: 'Intake Humidity', value: liveReading.humidity, unit: '%', decimals: 1, requires: ['humidity'] },
-                { key: 'outtake_humidity', label: 'Outtake Humidity', value: liveReading.outtake_humidity, unit: '%', decimals: 1, requires: ['outtake_humidity'] },
-                { key: 'energy_per_liter', label: 'Energy Consumption', value: periodEnergyPerLiter, unit: 'kWh/L', decimals: 3, requires: ['energy', 'weight'] },
-                { key: 'power', label: 'Power', value: liveReading.power, unit: 'W', decimals: 1, requires: ['power'] },
+                { key: 'water_total', label: 'Total Water Produced', value: hourlyRows.length > 0 ? periodTotalWaterL : null, unit: 'L', decimals: 2, requires: ['weight'], subLabel: null as string | null },
+                {
+                  key: 'water_per_hour',
+                  label: 'Water Production',
+                  value: latestWaterProducedL,
+                  unit: 'L/h',
+                  decimals: 2,
+                  requires: ['weight'],
+                  subLabel: latestWaterProducedIsStale && latestWaterProducedHour
+                    ? `as of ${formatPhoenixMonthDayTime(new Date(latestWaterProducedHour))}`
+                    : null,
+                },
+                { key: 'humidity', label: 'Intake Humidity', value: liveReading.humidity, unit: '%', decimals: 1, requires: ['humidity'], subLabel: null as string | null },
+                { key: 'outtake_humidity', label: 'Outtake Humidity', value: liveReading.outtake_humidity, unit: '%', decimals: 1, requires: ['outtake_humidity'], subLabel: null as string | null },
+                { key: 'energy_per_liter', label: 'Energy Consumption', value: periodEnergyPerLiter, unit: 'kWh/L', decimals: 3, requires: ['energy', 'weight'], subLabel: null as string | null },
+                { key: 'power', label: 'Power', value: liveReading.power, unit: 'W', decimals: 1, requires: ['power'], subLabel: null as string | null },
               ]
                 .filter(f => f.requires.every(r => availableFields.includes(r)) && typeof f.value === 'number')
                 .map(f => (
@@ -911,6 +825,11 @@ export default function StationDetails() {
                     <Typography variant="h6" sx={{ fontWeight: 700, color: '#1565c0' }}>
                       {(f.value as number).toFixed(f.decimals)} {f.unit}
                     </Typography>
+                    {f.subLabel && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                        {f.subLabel}
+                      </Typography>
+                    )}
                   </Box>
                 ))}
             </Box>
@@ -1213,394 +1132,6 @@ export default function StationDetails() {
         </motion.div>
       )}
 
-      {/* Data Download Section */}
-      {startDate && endDate && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.4 }}
-        >
-          <Paper 
-            elevation={0} 
-            sx={{ 
-              p: { xs: 2.5, md: 4 }, 
-              mt: 3,
-              border: '1px solid',
-              borderColor: 'divider',
-              borderRadius: 3,
-              background: 'rgba(255, 255, 255, 0.8)',
-              backdropFilter: 'blur(10px)',
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.06)',
-            }}
-          >
-            <Typography 
-              variant="h4" 
-              gutterBottom 
-              sx={{ 
-                fontWeight: 700,
-                color: '#1e88e5',
-                mb: 4,
-                fontSize: { xs: '1.5rem', md: '2rem' }
-              }}
-            >
-              📥 Data Download
-            </Typography>
-            
-            <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3 }}>
-              {/* Raw Data Download */}
-              <Paper
-                elevation={0}
-                sx={{
-                  flex: 1,
-                  p: 3,
-                  border: '2px solid #e3f2fd',
-                  borderRadius: 2,
-                  '&:hover': { borderColor: '#1e88e5' },
-                  transition: 'border-color 0.3s',
-                }}
-              >
-                <Typography variant="h6" sx={{ fontWeight: 700, color: '#1565c0', mb: 1 }}>
-                  Raw Data
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Download all raw sensor readings for the selected date range. One row per reading (~1/min). Select which variables to include.
-                </Typography>
-                
-                {/* Variable selection for raw download */}
-                <Box sx={{ mb: 2 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary' }}>
-                      Select Variables
-                    </Typography>
-                    <Button 
-                      size="small" 
-                      onClick={() => {
-                        const allFields = [
-                          ...availableFields.filter(f => fieldDisplayNames[f]),
-                          ...Array.from(COMPUTED_FIELDS),
-                        ];
-                        if (rawDownloadFields.length === allFields.length) {
-                          setRawDownloadFields([]);
-                        } else {
-                          setRawDownloadFields(allFields);
-                        }
-                      }}
-                      sx={{ textTransform: 'none', fontWeight: 600, fontSize: '0.8rem' }}
-                    >
-                      {rawDownloadFields.length === [...availableFields.filter(f => fieldDisplayNames[f]), ...Array.from(COMPUTED_FIELDS)].length ? 'Deselect All' : 'Select All'}
-                    </Button>
-                  </Box>
-                  <Box sx={{ 
-                    display: 'flex', 
-                    flexWrap: 'wrap', 
-                    gap: 0.75,
-                    maxHeight: '160px',
-                    overflowY: 'auto',
-                    p: 1,
-                    backgroundColor: '#f8f9fa',
-                    borderRadius: 1.5,
-                  }}>
-                    {[...availableFields.filter(f => fieldDisplayNames[f]), ...Array.from(COMPUTED_FIELDS)].map(field => (
-                      <Chip
-                        key={field}
-                        label={fieldDisplayNames[field]}
-                        size="small"
-                        onClick={() => {
-                          setRawDownloadFields(prev => 
-                            prev.includes(field) ? prev.filter(f => f !== field) : [...prev, field]
-                          );
-                        }}
-                        sx={{
-                          fontWeight: rawDownloadFields.includes(field) ? 600 : 400,
-                          backgroundColor: rawDownloadFields.includes(field) ? '#1e88e5' : 'white',
-                          color: rawDownloadFields.includes(field) ? 'white' : 'text.primary',
-                          border: '1px solid',
-                          borderColor: rawDownloadFields.includes(field) ? '#1e88e5' : '#ddd',
-                          cursor: 'pointer',
-                          '&:hover': { 
-                            backgroundColor: rawDownloadFields.includes(field) ? '#1565c0' : '#e3f2fd',
-                          },
-                        }}
-                      />
-                    ))}
-                  </Box>
-                </Box>
-
-                <Button
-                  variant="contained"
-                  fullWidth
-                  startIcon={rawDownloading ? <CircularProgress size={18} color="inherit" /> : <Download />}
-                  disabled={rawDownloadFields.length === 0 || rawDownloading}
-                  onClick={async () => {
-                    setRawDownloading(true);
-                    try {
-                      // Base fields needed for computation (always fetch these if any computed field is selected)
-                      const COMPUTE_DEPS = ['temperature', 'humidity', 'outtake_temperature', 'outtake_humidity', 'weight', 'energy'];
-                      const selectedRaw = rawDownloadFields.filter(f => !COMPUTED_FIELDS.has(f));
-                      const needsComputed = rawDownloadFields.some(f => COMPUTED_FIELDS.has(f));
-                      // Fetch all base fields + dependencies (no server-side filter when computed fields selected)
-                      const fieldsToFetch = needsComputed
-                        ? [...new Set([...selectedRaw, ...COMPUTE_DEPS])]
-                        : selectedRaw;
-
-                      const { data: rawRows, truncated } = await apiClient.getAllStationReadings(
-                        stationName,
-                        {
-                          start_date: startDate!.toISOString(),
-                          end_date: endDate!.toISOString(),
-                          fields: fieldsToFetch,
-                        },
-                        { maxRows: 200000, maxDurationMs: 240000 }
-                      );
-                      if (truncated) {
-                        setDownloadWarning(
-                          'The selected date range had more readings than could be exported at once — the downloaded CSV only covers the earliest part of the range. Pick a narrower date range for the rest.'
-                        );
-                      }
-
-                      // Sort ascending for temporal computations
-                      const sorted = [...rawRows].sort((a, b) =>
-                        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-                      );
-
-                      // Helper: Magnus formula for absolute humidity (g/m³)
-                      const absHumidity = (tempC: number, rhPct: number) => {
-                        const es = 6.112 * Math.exp((17.67 * tempC) / (tempC + 243.5));
-                        return Math.round((216.7 * (rhPct / 100.0) * es) / (273.15 + tempC) * 10000) / 10000;
-                      };
-
-                      // Compute derived fields row-by-row
-                      let accumulatedWaterG = 0;
-                      let prevWeight: number | null = null;
-                      let prevEnergy: number | null = null;
-                      let prevTimestamp: string | null = null;
-
-                      const enriched = sorted.map(r => {
-                        const row: Record<string, unknown> = { ...r };
-
-                        // Absolute humidity (intake)
-                        let absHIn: number | null = null;
-                        if (typeof r.temperature === 'number' && typeof r.humidity === 'number') {
-                          absHIn = absHumidity(r.temperature, r.humidity);
-                          row.abs_humidity_intake = absHIn;
-                        }
-                        // Absolute humidity (outtake)
-                        if (typeof r.outtake_temperature === 'number' && typeof r.outtake_humidity === 'number') {
-                          row.abs_humidity_outtake = absHumidity(r.outtake_temperature, r.outtake_humidity);
-                        }
-                        // Incremental water (only positive deltas above the noise floor — never subtract)
-                        const w = r.weight as number | null | undefined;
-                        let incWG = 0;
-                        if (typeof w === 'number') {
-                          const weightDelta = prevWeight !== null ? w - prevWeight : 0;
-                          incWG = weightDelta >= WEIGHT_NOISE_FLOOR_G ? weightDelta : 0;
-                          row.incremental_water_g = incWG;
-                          accumulatedWaterG += incWG;
-                          row.accumulated_water_L = Math.round(accumulatedWaterG / 1000 * 1000000) / 1000000;
-                          prevWeight = w;
-                        }
-                        // Incremental energy (only positive deltas). r.energy is already
-                        // cumulative kWh at the source — see the incEnergyMap note above
-                        // in this file for why this no longer divides by 1000 again.
-                        // Values above ENERGY_SANITY_CEILING_KWH are known-corrupt (same
-                        // note) — exported as null rather than a wildly-wrong number, and
-                        // not used as the "previous" pointer for the next row's delta.
-                        const eRaw = r.energy as number | null | undefined;
-                        const e = typeof eRaw === 'number' && eRaw <= ENERGY_SANITY_CEILING_KWH ? eRaw : null;
-                        if (e !== null) {
-                          row.energy = e;
-                          row.incremental_energy_kWh = prevEnergy !== null ? Math.round(Math.max(e - prevEnergy, 0) * 1000000) / 1000000 : 0;
-                          prevEnergy = e;
-                        } else if (typeof eRaw === 'number') {
-                          row.energy = null;
-                          row.incremental_energy_kWh = null;
-                        }
-                        // Harvesting efficiency
-                        const vel = r.velocity as number | null | undefined;
-                        if (absHIn !== null && typeof vel === 'number' && absHIn > 0 && vel > 0) {
-                          const dtMs = prevTimestamp ? new Date(r.timestamp).getTime() - new Date(prevTimestamp).getTime() : 30000;
-                          const dtS = Math.min(dtMs / 1000, 120);
-                          const velMps = velocityToMps(vel, r.unit);
-                          const intakeG = absHIn * velMps * AWH_DUCT_AREA_M2 * dtS;
-                          row.harvesting_efficiency = intakeG > 0
-                            ? Math.round(Math.min((incWG / intakeG) * 100, 100) * 10000) / 10000
-                            : 0;
-                        } else {
-                          row.harvesting_efficiency = 0;
-                        }
-                        prevTimestamp = r.timestamp;
-
-                        return row;
-                      });
-
-                      // Build CSV with user-selected columns only
-                      const exportData = enriched.map(r => {
-                        const csvRow: Record<string, unknown> = {
-                          station_name: r.station_name,
-                          timestamp: r.timestamp,
-                        };
-                        rawDownloadFields.forEach(f => {
-                          csvRow[fieldDisplayNames[f] || f] = r[f];
-                        });
-                        return csvRow;
-                      });
-                      const csv = Papa.unparse(exportData);
-                      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                      const link = document.createElement('a');
-                      link.href = URL.createObjectURL(blob);
-                      link.download = `${station.station_name}_raw_${format(startDate!, 'yyyyMMdd')}-${format(endDate!, 'yyyyMMdd')}.csv`;
-                      link.click();
-                    } catch (err) {
-                      console.error('Raw download failed:', err);
-                      setDownloadError(
-                        err instanceof Error
-                          ? `Raw data download failed: ${err.message}`
-                          : 'Raw data download failed. Please try again or narrow the date range.'
-                      );
-                    } finally {
-                      setRawDownloading(false);
-                    }
-                  }}
-                  sx={{
-                    background: 'linear-gradient(135deg, #4caf50 0%, #388e3c 100%)',
-                    fontWeight: 600,
-                    py: 1.5,
-                    borderRadius: 2,
-                    textTransform: 'none',
-                    '&:hover': {
-                      background: 'linear-gradient(135deg, #43a047 0%, #2e7d32 100%)',
-                    }
-                  }}
-                >
-                  {rawDownloading ? 'Downloading...' : `Download Raw CSV (${rawDownloadFields.length} variables)`}
-                </Button>
-              </Paper>
-
-              {/* Hourly Aggregated Data Download */}
-              <Paper
-                elevation={0}
-                sx={{
-                  flex: 1,
-                  p: 3,
-                  border: '2px solid #fce4ec',
-                  borderRadius: 2,
-                  '&:hover': { borderColor: '#901340' },
-                  transition: 'border-color 0.3s',
-                }}
-              >
-                <Typography variant="h6" sx={{ fontWeight: 700, color: '#901340', mb: 1 }}>
-                  Hourly Aggregated Data
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Hourly mean &amp; standard deviation for all sensor parameters, plus calculated fields: energy consumption (kWh/L), water production per hour, absolute humidity.
-                </Typography>
-                
-                <Box sx={{ mb: 2, p: 2, backgroundColor: '#f8f9fa', borderRadius: 1.5 }}>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary', mb: 1 }}>
-                    Includes per hour:
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                    {[
-                      'Temperature (mean/std)',
-                      'Humidity (mean/std)',
-                      'Velocity (mean/std)',
-                      'Outtake Temp (mean/std)',
-                      'Outtake Humidity (mean/std)',
-                      'Outtake Velocity (mean/std)',
-                      'Power (mean/std)',
-                      'Abs Humidity Intake',
-                      'Abs Humidity Outtake',
-                      'Water Produced (g, L)',
-                      'Energy Consumed (kWh)',
-                      'Energy/Liter (kWh/L)',
-                    ].map(label => (
-                      <Chip key={label} label={label} size="small" 
-                        sx={{ fontSize: '0.7rem', backgroundColor: '#fce4ec', color: '#901340', fontWeight: 500 }} 
-                      />
-                    ))}
-                  </Box>
-                </Box>
-
-                <Button
-                  variant="contained"
-                  fullWidth
-                  startIcon={hourlyDownloading ? <CircularProgress size={18} color="inherit" /> : <Download />}
-                  disabled={hourlyDownloading}
-                  onClick={async () => {
-                    setHourlyDownloading(true);
-                    try {
-                      const resp = await apiClient.getHourlyAggregation(stationName, {
-                        start_date: startDate!.toISOString(),
-                        end_date: endDate!.toISOString(),
-                      });
-                      const exportData = resp.data.map(row => ({
-                        'Hour': row.hour,
-                        'Reading Count': row.reading_count,
-                        'Temperature Mean (°C)': row.temperature_mean,
-                        'Temperature Std': row.temperature_std,
-                        'Humidity Mean (%)': row.humidity_mean,
-                        'Humidity Std': row.humidity_std,
-                        'Velocity Mean (m/s)': row.velocity_mean,
-                        'Velocity Std': row.velocity_std,
-                        'Outtake Temperature Mean (°C)': row.outtake_temperature_mean,
-                        'Outtake Temperature Std': row.outtake_temperature_std,
-                        'Outtake Humidity Mean (%)': row.outtake_humidity_mean,
-                        'Outtake Humidity Std': row.outtake_humidity_std,
-                        'Outtake Velocity Mean (m/s)': row.outtake_velocity_mean,
-                        'Outtake Velocity Std': row.outtake_velocity_std,
-                        'Power Mean (W)': row.power_mean,
-                        'Power Std': row.power_std,
-                        'Current Mean (A)': row.current_mean,
-                        'Current Std': row.current_std,
-                        'Voltage Mean (V)': row.voltage_mean,
-                        'Voltage Std': row.voltage_std,
-                        'Abs Humidity Intake Mean (g/m³)': row.abs_humidity_intake_mean,
-                        'Abs Humidity Intake Std': row.abs_humidity_intake_std,
-                        'Abs Humidity Outtake Mean (g/m³)': row.abs_humidity_outtake_mean,
-                        'Abs Humidity Outtake Std': row.abs_humidity_outtake_std,
-                        'Water Produced (g)': row.water_produced_g,
-                        'Water Produced (L)': row.water_produced_L,
-                        'Intake Available Water (g/hr)': row.intake_available_water_g_hourly,
-                        'Captured Water (g/hr)': row.water_captured_g_hourly,
-                        'Harvesting Efficiency Hourly (%)': row.harvesting_efficiency_pct_hourly,
-                        'Energy Consumed (kWh)': row.energy_consumed_kWh,
-                        'Energy per Liter (kWh/L)': row.energy_per_liter_kWh_L,
-                      }));
-                      const csv = Papa.unparse(exportData);
-                      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                      const link = document.createElement('a');
-                      link.href = URL.createObjectURL(blob);
-                      link.download = `${station.station_name}_hourly_${format(startDate!, 'yyyyMMdd')}-${format(endDate!, 'yyyyMMdd')}.csv`;
-                      link.click();
-                    } catch (err) {
-                      console.error('Hourly download failed:', err);
-                      setDownloadError(
-                        err instanceof Error
-                          ? `Hourly data download failed: ${err.message}`
-                          : 'Hourly data download failed. Please try again or narrow the date range.'
-                      );
-                    } finally {
-                      setHourlyDownloading(false);
-                    }
-                  }}
-                  sx={{
-                    background: 'linear-gradient(135deg, #901340 0%, #6a0f30 100%)',
-                    fontWeight: 600,
-                    py: 1.5,
-                    borderRadius: 2,
-                    textTransform: 'none',
-                    '&:hover': {
-                      background: 'linear-gradient(135deg, #7b1038 0%, #5a0d28 100%)',
-                    }
-                  }}
-                >
-                  {hourlyDownloading ? 'Downloading...' : 'Download Hourly CSV'}
-                </Button>
-              </Paper>
-            </Box>
-          </Paper>
-        </motion.div>
-      )}
 
       {/* Date Period Dialog */}
       <AnimatePresence>
@@ -1929,24 +1460,13 @@ export default function StationDetails() {
       </AnimatePresence>
 
       <Snackbar
-        open={!!downloadError}
+        open={!!dateRangeError}
         autoHideDuration={8000}
-        onClose={() => setDownloadError(null)}
+        onClose={() => setDateRangeError(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
-        <Alert onClose={() => setDownloadError(null)} severity="error" sx={{ width: '100%' }}>
-          {downloadError}
-        </Alert>
-      </Snackbar>
-
-      <Snackbar
-        open={!!downloadWarning}
-        autoHideDuration={10000}
-        onClose={() => setDownloadWarning(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert onClose={() => setDownloadWarning(null)} severity="warning" sx={{ width: '100%' }}>
-          {downloadWarning}
+        <Alert onClose={() => setDateRangeError(null)} severity="error" sx={{ width: '100%' }}>
+          {dateRangeError}
         </Alert>
       </Snackbar>
     </Box>
