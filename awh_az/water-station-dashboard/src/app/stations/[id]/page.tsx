@@ -38,6 +38,7 @@ import {
   ENERGY_SANITY_CEILING_KWH,
   computeAbsHumidity,
   velocityToMps,
+  splitStationDescription,
 } from '@/lib/stationFields';
 import { slugify } from '@/lib/slug';
 
@@ -534,7 +535,9 @@ export default function StationDetails() {
   if (!mounted) {
     return null;
   }
-  
+
+  const { text: descriptionText, rawStationId } = splitStationDescription(station.description);
+
   const dateRangeString = startDate && endDate
     ? `${format(startDate, 'MMM dd, yyyy')} - ${format(endDate, 'MMM dd, yyyy')}`
     : '';
@@ -694,10 +697,23 @@ export default function StationDetails() {
               📍 {station.location || 'ASU Campus'}
             </Typography>
             
-            <Typography variant="body1" paragraph sx={{ lineHeight: 1.8, mb: 3, opacity: 0.9 }}>
-              {station.description ||
+            <Typography variant="body1" paragraph sx={{ lineHeight: 1.8, mb: rawStationId ? 0.5 : 3, opacity: 0.9 }}>
+              {descriptionText ||
                 'This state-of-the-art atmospheric water harvesting station represents the cutting edge of sustainable water technology. Utilizing advanced condensation and filtration systems, it extracts clean, potable water directly from the ambient air.'}
             </Typography>
+
+            {rawStationId && (
+              <Typography
+                sx={{
+                  mb: 3,
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                  fontSize: '0.75rem',
+                  opacity: 0.6,
+                }}
+              >
+                ID: {rawStationId}
+              </Typography>
+            )}
             
             <Box sx={{ 
               display: 'grid', 

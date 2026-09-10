@@ -102,64 +102,60 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
 
   const formatTooltipLabel = (label: string) => formatPhoenixFullDateTime(new Date(label));
 
+  // A flat/near-empty line still needs enough height to read as a chart, but
+  // a fixed 380-560px made every panel dominate the page even when the
+  // selected range has only a handful of points. Scale height down for
+  // small datasets instead.
+  const chartHeight = plotData.length === 0
+    ? { xs: 200, sm: 240 }
+    : plotData.length < 20
+      ? { xs: 260, sm: 300 }
+      : { xs: 300, sm: 340, md: 380 };
+
   return (
     <Paper
       elevation={0}
       sx={{
-        p: { xs: 2.5, sm: 3.5 },
-        mt: { xs: 2, sm: 3 },
+        p: { xs: 2, sm: 2.75 },
+        mt: { xs: 1.5, sm: 2 },
         borderRadius: 3,
-        border: '1px solid rgba(30,136,229,0.15)',
-        background: 'linear-gradient(145deg, #ffffff 0%, #f8fbff 100%)',
-        boxShadow: '0 8px 32px rgba(30,136,229,0.08)',
-        overflow: 'hidden',
-        position: 'relative',
-        '&::before': {
-          content: '""',
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          height: '4px',
-          background: 'linear-gradient(90deg, #1e88e5, #e91e63)',
-          borderRadius: '3px 3px 0 0',
-        },
+        border: '1px solid rgba(15, 23, 42, 0.08)',
+        background: '#ffffff',
+        boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 3, flexWrap: 'wrap', gap: 1 }}>
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 2, flexWrap: 'wrap', gap: 1 }}>
         <Box>
           <Typography
-            variant="h5"
+            variant="h6"
             sx={{
-              fontSize: { xs: '1.1rem', sm: '1.35rem', md: '1.55rem' },
+              fontSize: { xs: '0.95rem', sm: '1.05rem' },
               fontWeight: 700,
-              background: 'linear-gradient(90deg, #1e88e5, #b8336a)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              mb: 0.5,
+              color: '#191919',
+              mb: 0.25,
             }}
           >
             {feature}
           </Typography>
-          <Typography variant="caption" sx={{ color: '#888', fontWeight: 500 }}>
+          <Typography variant="caption" sx={{ color: '#8a8a8a', fontWeight: 500 }}>
             {startDate} → {endDate} &nbsp;·&nbsp; {data.length.toLocaleString()} readings
           </Typography>
         </Box>
       </Box>
-      
+
       {data.length === 0 ? (
-        <Box 
-          display="flex" 
-          justifyContent="center" 
-          alignItems="center" 
-          height={{ xs: 400, sm: 500, md: 600 }}
+        <Box
+          display="flex"
+          justifyContent="center"
+          alignItems="center"
+          height={chartHeight}
         >
           <Typography variant="body1" color="text.secondary">
             No data available for the selected date range
           </Typography>
         </Box>
       ) : (
-        <Box sx={{ width: '100%', height: { xs: 380, sm: 460, md: 520, lg: 560 }, minHeight: 380 }}>
+        <Box sx={{ width: '100%', height: chartHeight }}>
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
               data={plotData}

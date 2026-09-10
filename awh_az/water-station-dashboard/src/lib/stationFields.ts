@@ -125,3 +125,21 @@ export function velocityToMps(velocity: number, unit?: string | null): number {
   if (u === 'ft/m') return velocity / 196.850394;
   return velocity; // default and 'm/s'
 }
+
+// Station descriptions carry a trailing "stationid:<raw station_name>" tag
+// (added so the raw id stays discoverable now that /stations/[id] routes by
+// name, not station_name — see slug.ts). Split it out so callers can render
+// the prose and the id separately instead of showing the raw tag inline.
+// The captured group must be greedy (`.+`, not `\S+`) — several real
+// station_names contain spaces/commas (e.g. "station_AquaPars #2 @Power
+// Station, Tempe"), and `\S+` silently failed to match the whole suffix on
+// those, leaving the raw "stationid:..." tag stuck in the truncated prose
+// instead of being split into its own tag.
+const STATION_ID_SUFFIX = /\s*stationid:(.+)\s*$/i;
+
+export function splitStationDescription(description?: string | null): { text: string; rawStationId?: string } {
+  if (!description) return { text: '' };
+  const match = description.match(STATION_ID_SUFFIX);
+  if (!match) return { text: description };
+  return { text: description.slice(0, match.index).trim(), rawStationId: match[1] };
+}
