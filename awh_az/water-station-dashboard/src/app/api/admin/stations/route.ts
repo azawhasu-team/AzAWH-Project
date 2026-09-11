@@ -12,47 +12,34 @@ async function requireAdminSession(): Promise<boolean> {
   return verifyAdminSessionToken(store.get(ADMIN_AUTH_COOKIE)?.value);
 }
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ name: string }> }
-) {
+export async function GET() {
   if (!(await requireAdminSession())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { name } = await params;
-  const body = await request.json();
-
-  const res = await fetch(`${API_BASE_URL}/admin/stations/${encodeURIComponent(name)}`, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Admin-Key': process.env.ADMIN_API_KEY || '',
-    },
-    body: JSON.stringify(body),
+  const res = await fetch(`${API_BASE_URL}/admin/stations`, {
+    headers: { 'X-Admin-Key': process.env.ADMIN_API_KEY || '' },
+    cache: 'no-store',
   });
 
   const data = await res.json().catch(() => ({}));
   return NextResponse.json(data, { status: res.status });
 }
 
-// Permanently deletes the station and its entire readings history — can
-// take a while for a station with a lot of data, since the backend batch-
-// deletes readings 450 at a time rather than in one call. No timeout override
-// here; the dashboard's confirmation dialog is the safeguard, not this route.
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ name: string }> }
-) {
+export async function POST(request: NextRequest) {
   if (!(await requireAdminSession())) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { name } = await params;
+  const body = await request.json();
 
-  const res = await fetch(`${API_BASE_URL}/admin/stations/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-    headers: { 'X-Admin-Key': process.env.ADMIN_API_KEY || '' },
+  const res = await fetch(`${API_BASE_URL}/admin/stations`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Key': process.env.ADMIN_API_KEY || '',
+    },
+    body: JSON.stringify(body),
   });
 
   const data = await res.json().catch(() => ({}));

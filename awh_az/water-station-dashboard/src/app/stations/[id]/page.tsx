@@ -628,11 +628,11 @@ export default function StationDetails() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.1 }}
       >
-        <Paper 
-          elevation={0} 
-          sx={{ 
-            p: { xs: 3, md: 4 }, 
-            mb: 4,
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 3, md: 4 },
+            mb: 3,
             background: 'linear-gradient(135deg, #1e88e5 0%, #1565c0 100%)',
             color: 'white',
             borderRadius: 3,
@@ -754,17 +754,15 @@ export default function StationDetails() {
           elevation={0}
           sx={{
             p: { xs: 2.5, md: 3 },
-            mb: 4,
-            border: '1px solid',
-            borderColor: 'divider',
+            mb: 3,
+            border: '1px solid rgba(15, 23, 42, 0.08)',
             borderRadius: 3,
-            background: 'rgba(255, 255, 255, 0.8)',
-            backdropFilter: 'blur(10px)',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.06)',
+            background: '#ffffff',
+            boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
           }}
         >
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2.5, flexWrap: 'wrap', gap: 1 }}>
-            <Typography variant="h6" sx={{ fontWeight: 700, color: '#1e88e5', fontSize: '1.15rem' }}>
+            <Typography variant="h6" sx={{ fontWeight: 700, color: '#191919', fontSize: '1.1rem' }}>
               Live Status
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -831,14 +829,14 @@ export default function StationDetails() {
                     sx={{
                       p: 2,
                       borderRadius: 2,
-                      backgroundColor: 'rgba(248, 249, 250, 0.7)',
-                      border: '1px solid rgba(222, 226, 230, 0.6)',
+                      backgroundColor: '#f8f9fb',
+                      border: '1px solid rgba(15, 23, 42, 0.06)',
                     }}
                   >
                     <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
                       {f.label.toUpperCase()}
                     </Typography>
-                    <Typography variant="h6" sx={{ fontWeight: 700, color: '#1565c0' }}>
+                    <Typography variant="h6" sx={{ fontWeight: 700, color: '#191919' }}>
                       {(f.value as number).toFixed(f.decimals)} {f.unit}
                     </Typography>
                     {f.subLabel && (
@@ -865,76 +863,62 @@ export default function StationDetails() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.2 }}
       >
-        <Paper 
-          elevation={0} 
-          sx={{ 
-            p: { xs: 2.5, md: 4 }, 
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2.5, md: 3.5 },
             mb: 3,
-            border: '1px solid',
-            borderColor: 'divider',
+            border: '1px solid rgba(15, 23, 42, 0.08)',
             borderRadius: 3,
-            background: 'rgba(255, 255, 255, 0.8)',
-            backdropFilter: 'blur(10px)',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.06)',
+            background: '#ffffff',
+            boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
           }}
         >
-        <Typography 
-          variant="h4" 
-          gutterBottom 
-          sx={{ 
+        <Typography
+          variant="h6"
+          gutterBottom
+          sx={{
             fontWeight: 700,
-            color: '#1e88e5',
-            mb: 4,
-            fontSize: { xs: '1.5rem', md: '2rem' }
+            color: '#191919',
+            mb: 3,
+            fontSize: { xs: '1.15rem', md: '1.3rem' }
           }}
         >
-          📊 Performance Analytics
+          Performance Analytics
         </Typography>
-        
+
         {/* Filter Controls */}
-        <Box sx={{ 
-          background: 'rgba(248, 249, 250, 0.7)',
-          backdropFilter: 'blur(10px)',
+        <Box sx={{
+          background: '#f8f9fb',
           borderRadius: 3,
-          p: 4,
-          mb: 4,
-          border: '1px solid rgba(222, 226, 230, 0.6)',
-          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.04)',
+          p: 3,
+          mb: 3,
+          border: '1px solid rgba(15, 23, 42, 0.06)',
         }}>
-          <Typography 
-            variant="h6" 
-            gutterBottom 
-            sx={{ 
-              fontSize: '1.25rem', 
+          <Typography
+            variant="subtitle2"
+            gutterBottom
+            sx={{
+              fontSize: '0.95rem',
               fontWeight: 700,
-              color: '#1e88e5',
-              mb: 3,
+              color: '#191919',
+              mb: 2,
               display: 'flex',
               alignItems: 'center',
               gap: 1
             }}
           >
-            <Box sx={{ 
-              backgroundColor: '#1e88e5',
-              borderRadius: '50%',
-              p: 0.75,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <Tune sx={{ fontSize: '1.25rem', color: 'white' }} />
-            </Box>
+            <Tune sx={{ fontSize: '1.1rem', color: '#1e88e5' }} />
             Configure Data View
           </Typography>
-          
-          <Box 
+
+          <Box
             sx={{
               display: 'flex',
-              gap: 3,
+              gap: 2,
               flexWrap: 'wrap',
             }}
           >
-            {/* Date Period Button */}
             {/* Date Period Button */}
             <motion.div
               whileHover={{ scale: 1.02 }}
@@ -952,23 +936,22 @@ export default function StationDetails() {
                   setDateDialogOpen(true);
                 }}
                 sx={{
-                  px: 4,
-                  py: 2,
-                  background: 'rgba(255, 255, 255, 0.9)',
-                  backdropFilter: 'blur(10px)',
-                  border: '2px solid #1e88e5',
+                  px: 2.5,
+                  py: 1.25,
+                  background: '#ffffff',
+                  border: '1px solid rgba(30, 136, 229, 0.35)',
                   color: '#1e88e5',
                   fontWeight: 600,
                   textTransform: 'none',
-                  fontSize: '1.05rem',
-                  borderRadius: 2.5,
-                  boxShadow: '0 4px 12px rgba(30, 136, 229, 0.15)',
-                  transition: 'all 0.3s ease',
+                  fontSize: '0.95rem',
+                  borderRadius: 2,
+                  boxShadow: 'none',
+                  transition: 'background-color 0.15s ease, border-color 0.15s ease',
                   '&:hover': {
-                    background: 'linear-gradient(135deg, #1e88e5 0%, #1565c0 100%)',
+                    background: '#1e88e5',
                     color: 'white',
-                    boxShadow: '0 6px 20px rgba(30, 136, 229, 0.3)',
-                    border: '2px solid #1565c0',
+                    borderColor: '#1e88e5',
+                    boxShadow: 'none',
                   }
                 }}
               >
@@ -1002,23 +985,22 @@ export default function StationDetails() {
                   setParamDialogOpen(true);
                 }}
                 sx={{
-                  px: 4,
-                  py: 2,
-                  background: 'rgba(255, 255, 255, 0.9)',
-                  backdropFilter: 'blur(10px)',
-                  border: '2px solid #1e88e5',
+                  px: 2.5,
+                  py: 1.25,
+                  background: '#ffffff',
+                  border: '1px solid rgba(30, 136, 229, 0.35)',
                   color: '#1e88e5',
                   fontWeight: 600,
                   textTransform: 'none',
-                  fontSize: '1.05rem',
-                  borderRadius: 2.5,
-                  boxShadow: '0 4px 12px rgba(30, 136, 229, 0.15)',
-                  transition: 'all 0.3s ease',
+                  fontSize: '0.95rem',
+                  borderRadius: 2,
+                  boxShadow: 'none',
+                  transition: 'background-color 0.15s ease, border-color 0.15s ease',
                   '&:hover': {
-                    background: 'linear-gradient(135deg, #1e88e5 0%, #1565c0 100%)',
+                    background: '#1e88e5',
                     color: 'white',
-                    boxShadow: '0 6px 20px rgba(30, 136, 229, 0.3)',
-                    border: '2px solid #1565c0',
+                    borderColor: '#1e88e5',
+                    boxShadow: 'none',
                   }
                 }}
               >
