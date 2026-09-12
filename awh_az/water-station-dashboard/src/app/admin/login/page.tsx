@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import {
   Box,
@@ -13,7 +13,6 @@ import {
 } from '@mui/material';
 
 function AdminLoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [passphrase, setPassphrase] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -37,9 +36,18 @@ function AdminLoginForm() {
         return;
       }
 
-      const redirectTo = searchParams.get('from') || '/admin/stations';
-      router.push(redirectTo);
-      router.refresh();
+      // Hard navigation, not router.push — the Header's nav (rendered on this
+      // page too) links to /admin/stations, and Next may have prefetched that
+      // link's pre-login (redirect-to-login) response before the passphrase
+      // was ever submitted. router.push can reuse that stale cache entry and
+      // get stuck on this page; a full navigation always re-hits the server
+      // with the just-set admin cookie.
+      // Restricted to a same-origin path — unlike router.push, window.location.assign
+      // would actually follow an absolute/protocol-relative URL, so an unvalidated
+      // `from` param would be an open redirect.
+      const from = searchParams.get('from') || '';
+      const redirectTo = from.startsWith('/') && !from.startsWith('//') ? from : '/admin/stations';
+      window.location.assign(redirectTo);
     } catch {
       setError('Something went wrong. Please try again.');
       setSubmitting(false);

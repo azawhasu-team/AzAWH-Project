@@ -150,7 +150,10 @@ export default function Header() {
             </Button>
           </Link>
           
-          <Link href="/admin/stations" passHref style={{ textDecoration: 'none' }}>
+          {/* prefetch=false — this route is gated by the admin passphrase; prefetching it while
+              unauthenticated caches Next's redirect-to-/admin/login response, which the router
+              can then reuse (stale) right after a successful login and get stuck there. */}
+          <Link href="/admin/stations" passHref prefetch={false} style={{ textDecoration: 'none' }}>
             <Button
               sx={{
                 color: 'text.primary',
