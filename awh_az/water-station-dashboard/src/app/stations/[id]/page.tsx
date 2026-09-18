@@ -755,14 +755,15 @@ export default function StationDetails() {
           sx={{
             p: { xs: 2.5, md: 3 },
             mb: 3,
-            border: '1px solid rgba(15, 23, 42, 0.08)',
+            border: '1px solid',
+            borderColor: 'divider',
             borderRadius: 3,
-            background: '#ffffff',
-            boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+            background: 'background.paper',
+            boxShadow: (theme) => theme.palette.mode === 'dark' ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(15, 23, 42, 0.06)',
           }}
         >
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2.5, flexWrap: 'wrap', gap: 1 }}>
-            <Typography variant="h6" sx={{ fontWeight: 700, color: '#191919', fontSize: '1.1rem' }}>
+            <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary', fontSize: '1.1rem' }}>
               Live Status
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -829,14 +830,15 @@ export default function StationDetails() {
                     sx={{
                       p: 2,
                       borderRadius: 2,
-                      backgroundColor: '#f8f9fb',
-                      border: '1px solid rgba(15, 23, 42, 0.06)',
+                      backgroundColor: 'action.hover',
+                      border: '1px solid',
+                      borderColor: 'divider',
                     }}
                   >
                     <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
                       {f.label.toUpperCase()}
                     </Typography>
-                    <Typography variant="h6" sx={{ fontWeight: 700, color: '#191919' }}>
+                    <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary' }}>
                       {(f.value as number).toFixed(f.decimals)} {f.unit}
                     </Typography>
                     {f.subLabel && (
@@ -868,10 +870,11 @@ export default function StationDetails() {
           sx={{
             p: { xs: 2.5, md: 3.5 },
             mb: 3,
-            border: '1px solid rgba(15, 23, 42, 0.08)',
+            border: '1px solid',
+            borderColor: 'divider',
             borderRadius: 3,
-            background: '#ffffff',
-            boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+            background: 'background.paper',
+            boxShadow: (theme) => theme.palette.mode === 'dark' ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(15, 23, 42, 0.06)',
           }}
         >
         <Typography
@@ -879,7 +882,7 @@ export default function StationDetails() {
           gutterBottom
           sx={{
             fontWeight: 700,
-            color: '#191919',
+            color: 'text.primary',
             mb: 3,
             fontSize: { xs: '1.15rem', md: '1.3rem' }
           }}
@@ -889,11 +892,12 @@ export default function StationDetails() {
 
         {/* Filter Controls */}
         <Box sx={{
-          background: '#f8f9fb',
+          background: 'action.hover',
           borderRadius: 3,
           p: 3,
           mb: 3,
-          border: '1px solid rgba(15, 23, 42, 0.06)',
+          border: '1px solid',
+          borderColor: 'divider',
         }}>
           <Typography
             variant="subtitle2"
@@ -901,7 +905,7 @@ export default function StationDetails() {
             sx={{
               fontSize: '0.95rem',
               fontWeight: 700,
-              color: '#191919',
+              color: 'text.primary',
               mb: 2,
               display: 'flex',
               alignItems: 'center',
@@ -938,7 +942,7 @@ export default function StationDetails() {
                 sx={{
                   px: 2.5,
                   py: 1.25,
-                  background: '#ffffff',
+                  background: 'background.paper',
                   border: '1px solid rgba(30, 136, 229, 0.35)',
                   color: '#1e88e5',
                   fontWeight: 600,
@@ -987,7 +991,7 @@ export default function StationDetails() {
                 sx={{
                   px: 2.5,
                   py: 1.25,
-                  background: '#ffffff',
+                  background: 'background.paper',
                   border: '1px solid rgba(30, 136, 229, 0.35)',
                   color: '#1e88e5',
                   fontWeight: 600,
@@ -1189,13 +1193,13 @@ export default function StationDetails() {
                     size: 'medium',
                     sx: {
                       '& .MuiOutlinedInput-root': {
-                        backgroundColor: '#f8f9fa',
+                        backgroundColor: 'action.hover',
                         borderRadius: 2,
                         '&:hover': {
-                          backgroundColor: '#e9ecef'
+                          backgroundColor: 'action.selected'
                         },
                         '&.Mui-focused': {
-                          backgroundColor: 'white'
+                          backgroundColor: 'background.paper'
                         }
                       }
                     }
@@ -1217,13 +1221,13 @@ export default function StationDetails() {
                     size: 'medium',
                     sx: {
                       '& .MuiOutlinedInput-root': {
-                        backgroundColor: '#f8f9fa',
+                        backgroundColor: 'action.hover',
                         borderRadius: 2,
                         '&:hover': {
-                          backgroundColor: '#e9ecef'
+                          backgroundColor: 'action.selected'
                         },
                         '&.Mui-focused': {
-                          backgroundColor: 'white'
+                          backgroundColor: 'background.paper'
                         }
                       }
                     }
@@ -1236,7 +1240,7 @@ export default function StationDetails() {
         <DialogActions sx={{ 
           p: 3, 
           px: 4,
-          backgroundColor: '#f8f9fa',
+          backgroundColor: 'action.hover',
           gap: 2
         }}>
           <Button 
@@ -1342,7 +1346,7 @@ export default function StationDetails() {
 
             {Object.keys(parameterCategories).length > 0 ? (
               <Box sx={{
-                backgroundColor: '#f8f9fa',
+                backgroundColor: 'action.hover',
                 borderRadius: 2,
                 p: 2.5,
                 maxHeight: '420px',
@@ -1371,7 +1375,7 @@ export default function StationDetails() {
                                   color: '#1565c0',
                                 },
                                 '&.Mui-disabled': {
-                                  color: '#ccc',
+                                  color: 'text.disabled',
                                 }
                               }}
                             />
@@ -1382,12 +1386,12 @@ export default function StationDetails() {
                             px: 2,
                             borderRadius: 1.5,
                             mb: 1,
-                            backgroundColor: tempParameters.includes(param) ? '#e3f2fd' : 'white',
+                            backgroundColor: tempParameters.includes(param) ? '#e3f2fd' : 'background.paper',
                             border: '1px solid',
-                            borderColor: tempParameters.includes(param) ? '#1565c0' : '#e0e0e0',
+                            borderColor: tempParameters.includes(param) ? '#1565c0' : 'divider',
                             transition: 'all 0.2s',
                             '&:hover': {
-                              backgroundColor: tempParameters.includes(param) ? '#bbdefb' : '#f5f5f5',
+                              backgroundColor: tempParameters.includes(param) ? '#bbdefb' : 'action.hover',
                               transform: 'translateX(4px)',
                             },
                             '& .MuiFormControlLabel-label': {
@@ -1412,7 +1416,7 @@ export default function StationDetails() {
         <DialogActions sx={{ 
           p: 3,
           px: 4, 
-          backgroundColor: '#f8f9fa',
+          backgroundColor: 'action.hover',
           gap: 2
         }}>
           <Button 

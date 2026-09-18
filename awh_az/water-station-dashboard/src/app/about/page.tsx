@@ -13,7 +13,7 @@ export default function AboutPage() {
           mb: 4,
         }}
       >
-        About AWH
+        About AzAWH
       </Typography>
 
       <Paper
@@ -29,15 +29,18 @@ export default function AboutPage() {
           Atmospheric Water Harvesting
         </Typography>
         <Typography variant="body1" paragraph color="text.secondary" sx={{ lineHeight: 1.8 }}>
-          The AWH (Atmospheric Water Harvesting) is an innovative system developed
-          by Arizona State University that extracts clean water from the atmosphere. Our platform provides 
-          real-time monitoring and analysis of atmospheric water harvesting stations across the region, 
-          helping ensure optimal water production and quality management.
+          AzAWH (Arizona Atmospheric Water Harvesting) stations extract liquid water directly
+          from humid air, using fan-driven airflow across a condensing surface, with no
+          groundwater, reservoir, or existing water source required. The stations are designed,
+          deployed, and operated by the School of Sustainable Engineering and the Built
+          Environment (SSEBE) at Arizona State University.
         </Typography>
         <Typography variant="body1" paragraph color="text.secondary" sx={{ lineHeight: 1.8 }}>
-          With advanced data visualization and analytics capabilities, AWH enables researchers,
-          administrators, and stakeholders to make informed decisions about water resource management
-          and conservation efforts.
+          This dashboard is the monitoring layer for that hardware. 9 stations have been deployed
+          and instrumented to date, together generating a combined archive of over 1.5 million
+          sensor readings. Each streams intake and outtake air temperature and humidity, airflow
+          velocity, water collected, power draw, and cumulative energy use. The full historical
+          record for every station remains available here even after it stops reporting new data.
         </Typography>
       </Paper>
 
@@ -65,8 +68,8 @@ export default function AboutPage() {
             Real-Time Monitoring
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
-            Track water quality metrics including temperature, pH levels, humidity, and water
-            production in real-time across multiple stations.
+            Live intake and outtake air temperature and humidity, airflow velocity, water
+            collected, and power draw, refreshed continuously across every station.
           </Typography>
         </Paper>
 
@@ -79,11 +82,11 @@ export default function AboutPage() {
           }}
         >
           <Typography variant="h6" gutterBottom sx={{ color: 'primary.main', fontWeight: 600 }}>
-            Data Visualization
+            Harvesting Efficiency Analytics
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
-            Interactive charts and graphs provide clear insights into water station performance
-            and trends over customizable time periods.
+            Hourly-aggregated charts of water production, harvesting efficiency, and specific
+            energy consumption (kWh per liter), plus side-by-side comparison across stations.
           </Typography>
         </Paper>
 
@@ -99,8 +102,8 @@ export default function AboutPage() {
             Export & Analysis
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
-            Export data in CSV format and preview in Excel-compatible format for further analysis
-            and reporting purposes.
+            Download raw or hourly-aggregated readings as CSV for any station and date range,
+            for offline analysis or reporting.
           </Typography>
         </Paper>
 
@@ -116,8 +119,8 @@ export default function AboutPage() {
             Responsive Design
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
-            Access the platform seamlessly from any device - desktop, tablet, or mobile - with
-            a fully responsive interface.
+            Access the platform seamlessly from any device, including desktop, tablet, and
+            mobile, with a fully responsive interface.
           </Typography>
         </Paper>
       </Box>

@@ -11,7 +11,7 @@ import {
   Chip,
   Box
 } from '@mui/material';
-import { Circle as CircleIcon, Info as InfoIcon } from '@mui/icons-material';
+import { Circle as CircleIcon, Info as InfoIcon, LocationOn as LocationOnIcon } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
 import { Station } from '@/types';
 import { slugify } from '@/lib/slug';
@@ -41,15 +41,16 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
         width: '100%',
         display: 'flex', 
         flexDirection: 'column',
-        background: '#ffffff',
-        border: '2px solid #1e88e5',
+        background: 'background.paper',
+        border: '2px solid',
+        borderColor: 'primary.main',
         borderRadius: 2,
         transition: 'all 0.3s ease',
         cursor: 'pointer',
         '&:hover': {
           transform: 'translateY(-8px)',
-          boxShadow: '0 12px 28px rgba(30, 136, 229, 0.3)',
-          borderColor: '#1565c0',
+          boxShadow: '0 12px 28px rgba(144, 19, 64, 0.3)',
+          borderColor: 'primary.dark',
         }
       }}
       onClick={handleViewDetails}
@@ -61,7 +62,8 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
         alt={station.image ? `${station.name} photo` : 'Station photo coming soon'}
         sx={{
           objectFit: 'cover',
-          borderBottom: '3px solid #1e88e5'
+          borderBottom: '3px solid',
+          borderColor: 'primary.main',
         }}
       />
       <CardContent sx={{ flexGrow: 1, p: 2 }}>
@@ -70,7 +72,7 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
             variant="body1"
             component="h2"
             sx={{
-              color: '#1e88e5',
+              color: 'primary.main',
               fontWeight: 700,
               fontSize: '0.85rem',
               flex: 1,
@@ -100,11 +102,15 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
           sx={{
             mb: 1,
             fontWeight: 600,
-            color: '#555',
+            color: 'text.secondary',
             fontSize: '0.8rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.5,
           }}
         >
-          📍 {station.location || 'Location Unknown'}
+          <LocationOnIcon sx={{ fontSize: 14 }} />
+          {station.location || 'Location Unknown'}
         </Typography>
 
 
@@ -113,7 +119,7 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
           color="text.secondary"
           sx={{
             lineHeight: 1.5,
-            color: '#666',
+            color: 'text.secondary',
             fontSize: '0.78rem'
           }}
         >
@@ -129,13 +135,13 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
           startIcon={<InfoIcon sx={{ fontSize: 16 }} />}
           fullWidth
           sx={{
-            backgroundColor: '#1e88e5',
+            backgroundColor: 'primary.main',
             color: 'white',
             fontWeight: 600,
             fontSize: '0.8rem',
             py: 0.6,
             '&:hover': {
-              backgroundColor: '#1565c0',
+              backgroundColor: 'primary.dark',
               transform: 'translateY(-2px)',
             }
           }}

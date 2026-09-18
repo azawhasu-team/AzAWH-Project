@@ -12,6 +12,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { Box, Typography, Paper } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import { FeatureType, ChartDataPoint } from '@/types';
 import { formatPhoenixTime, formatPhoenixFullDateTime, phoenixDateKey } from '@/lib/timezone';
 
@@ -25,6 +26,13 @@ interface FeaturePlotProps {
 }
 
 const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, endDate, paramNames, paramUnits }) => {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
+  // Recharts takes literal color strings, not MUI theme tokens.
+  const chartGridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  const chartAxisStroke = isDark ? '#777' : '#bbb';
+  const chartAxisLineColor = isDark ? 'rgba(255,255,255,0.2)' : '#e0e0e0';
+  const chartTickColor = isDark ? '#aaa' : '#888';
   const hasSecondParam = data.length > 0 && data[0].value2 !== undefined;
   const param1Name = paramNames?.[0] || feature;
   const param2Name = paramNames?.[1] || 'Parameter 2';
@@ -119,9 +127,10 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
         p: { xs: 2, sm: 2.75 },
         mt: { xs: 1.5, sm: 2 },
         borderRadius: 3,
-        border: '1px solid rgba(15, 23, 42, 0.08)',
-        background: '#ffffff',
-        boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
+        border: '1px solid',
+        borderColor: 'divider',
+        background: 'background.paper',
+        boxShadow: (t) => t.palette.mode === 'dark' ? '0 1px 3px rgba(0,0,0,0.3)' : '0 1px 3px rgba(15, 23, 42, 0.06)',
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 2, flexWrap: 'wrap', gap: 1 }}>
@@ -131,13 +140,13 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
             sx={{
               fontSize: { xs: '0.95rem', sm: '1.05rem' },
               fontWeight: 700,
-              color: '#191919',
+              color: 'text.primary',
               mb: 0.25,
             }}
           >
             {feature}
           </Typography>
-          <Typography variant="caption" sx={{ color: '#8a8a8a', fontWeight: 500 }}>
+          <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 500 }}>
             {startDate} → {endDate} &nbsp;·&nbsp; {data.length.toLocaleString()} readings
           </Typography>
         </Box>
@@ -171,22 +180,22 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
                   <stop offset="95%" stopColor="#e91e63" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="4 4" stroke="rgba(0,0,0,0.06)" vertical={false} />
+              <CartesianGrid strokeDasharray="4 4" stroke={chartGridColor} vertical={false} />
               <XAxis
                 dataKey="date"
                 tickFormatter={formatDate}
-                stroke="#bbb"
+                stroke={chartAxisStroke}
                 interval={tickInterval}
                 angle={-35}
                 textAnchor="end"
                 height={60}
-                tick={{ fontSize: 11, fill: '#888' }}
-                axisLine={{ stroke: '#e0e0e0' }}
+                tick={{ fontSize: 11, fill: chartTickColor }}
+                axisLine={{ stroke: chartAxisLineColor }}
                 tickLine={false}
               />
               <YAxis
                 yAxisId="left"
-                stroke="#bbb"
+                stroke={chartAxisStroke}
                 tickFormatter={(v: number) => unit1 ? `${typeof v === 'number' ? Number(v).toFixed(1) : v} ${unit1}` : String(v)}
                 label={{
                   value: unit1 || param1Name,
@@ -196,7 +205,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
                   style: { fill: '#1e88e5', fontSize: '12px', fontWeight: 600 }
                 }}
                 width={unit1 ? 75 : 60}
-                tick={{ fontSize: 11, fill: '#888' }}
+                tick={{ fontSize: 11, fill: chartTickColor }}
                 axisLine={false}
                 tickLine={false}
               />
@@ -204,7 +213,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
                 <YAxis
                   yAxisId="right"
                   orientation="right"
-                  stroke="#bbb"
+                  stroke={chartAxisStroke}
                   tickFormatter={(v: number) => unit2 ? `${typeof v === 'number' ? Number(v).toFixed(1) : v} ${unit2}` : String(v)}
                   label={{
                     value: unit2 || param2Name,
@@ -214,7 +223,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
                     style: { fill: '#e91e63', fontSize: '12px', fontWeight: 600 }
                   }}
                   width={unit2 ? 75 : 60}
-                  tick={{ fontSize: 11, fill: '#888' }}
+                  tick={{ fontSize: 11, fill: chartTickColor }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -228,14 +237,14 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
                   return [`${formatted}${unit ? ' ' + unit : ''}`, name];
                 }}
                 contentStyle={{
-                  backgroundColor: 'rgba(255,255,255,0.97)',
+                  backgroundColor: isDark ? 'rgba(30,30,30,0.97)' : 'rgba(255,255,255,0.97)',
                   border: '1px solid rgba(30,136,229,0.2)',
                   borderRadius: '10px',
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                  boxShadow: isDark ? '0 8px 24px rgba(0,0,0,0.5)' : '0 8px 24px rgba(0,0,0,0.12)',
                   padding: '10px 14px',
                   fontSize: '13px',
                 }}
-                labelStyle={{ fontWeight: 700, color: '#333', marginBottom: 4 }}
+                labelStyle={{ fontWeight: 700, color: isDark ? '#eee' : '#333', marginBottom: 4 }}
                 cursor={{ stroke: 'rgba(30,136,229,0.3)', strokeWidth: 1, strokeDasharray: '4 4' }}
               />
               <Legend

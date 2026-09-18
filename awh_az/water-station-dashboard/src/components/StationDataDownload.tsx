@@ -85,7 +85,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
           sx={{
             flex: 1,
             p: 3,
-            border: '2px solid #e3f2fd',
+            border: (t) => t.palette.mode === 'dark' ? '2px solid rgba(30,136,229,0.3)' : '2px solid #e3f2fd',
             borderRadius: 2,
             '&:hover': { borderColor: '#1e88e5' },
             transition: 'border-color 0.3s',
@@ -120,7 +120,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
               maxHeight: '160px',
               overflowY: 'auto',
               p: 1,
-              backgroundColor: '#f8f9fa',
+              backgroundColor: 'action.hover',
               borderRadius: 1.5,
             }}>
               {allDownloadFields.map(field => (
@@ -135,10 +135,10 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                   }}
                   sx={{
                     fontWeight: rawDownloadFields.includes(field) ? 600 : 400,
-                    backgroundColor: rawDownloadFields.includes(field) ? '#1e88e5' : 'white',
+                    backgroundColor: rawDownloadFields.includes(field) ? '#1e88e5' : 'background.paper',
                     color: rawDownloadFields.includes(field) ? 'white' : 'text.primary',
                     border: '1px solid',
-                    borderColor: rawDownloadFields.includes(field) ? '#1e88e5' : '#ddd',
+                    borderColor: rawDownloadFields.includes(field) ? '#1e88e5' : 'divider',
                     cursor: 'pointer',
                     '&:hover': {
                       backgroundColor: rawDownloadFields.includes(field) ? '#1565c0' : '#e3f2fd',
@@ -284,7 +284,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
           sx={{
             flex: 1,
             p: 3,
-            border: '2px solid #fce4ec',
+            border: (t) => t.palette.mode === 'dark' ? '2px solid rgba(144,19,64,0.3)' : '2px solid #fce4ec',
             borderRadius: 2,
             '&:hover': { borderColor: '#901340' },
             transition: 'border-color 0.3s',
@@ -297,7 +297,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
             Hourly mean &amp; standard deviation for all sensor parameters, plus calculated fields: energy consumption (kWh/L), water production per hour, absolute humidity.
           </Typography>
 
-          <Box sx={{ mb: 2, p: 2, backgroundColor: '#f8f9fa', borderRadius: 1.5 }}>
+          <Box sx={{ mb: 2, p: 2, backgroundColor: 'action.hover', borderRadius: 1.5 }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary', mb: 1 }}>
               Includes per hour:
             </Typography>

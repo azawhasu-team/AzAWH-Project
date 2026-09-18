@@ -96,7 +96,7 @@ export default function StationsPage() {
         sx={{
           mb: 1,
           fontWeight: 700,
-          color: '#191919',
+          color: 'text.primary',
           textAlign: 'center',
           letterSpacing: '-0.5px',
         }}
@@ -105,7 +105,7 @@ export default function StationsPage() {
       </Typography>
 
       <Box sx={{ mb: 5, textAlign: 'center' }}>
-        <Typography variant="body1" sx={{ fontWeight: 500, color: '#484848', fontSize: '0.95rem' }}>
+        <Typography variant="body1" sx={{ fontWeight: 500, color: 'text.secondary', fontSize: '0.95rem' }}>
           Total Stations: {stationCards.length} |
           Online: {onlineStationCards.length} |
           Offline: {offlineStationCards.length}
@@ -120,7 +120,7 @@ export default function StationsPage() {
           mb: { xs: 5, sm: 6, md: 7 },
           fontSize: { xs: '1.05rem', sm: '1.15rem', md: '1.25rem' },
           px: { xs: 2, sm: 1, md: 0 },
-          color: '#484848',
+          color: 'text.secondary',
           fontWeight: 400,
           lineHeight: 1.6,
         }}
@@ -140,14 +140,14 @@ export default function StationsPage() {
 
       {onlineStationCards.length > 0 && offlineStationCards.length > 0 && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, my: 5 }}>
-          <Box sx={{ flex: 1, height: '1px', backgroundColor: 'rgba(0,0,0,0.1)' }} />
+          <Box sx={{ flex: 1, height: '1px', backgroundColor: 'divider' }} />
           <Typography
             variant="body2"
             sx={{ color: 'text.secondary', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '1.5px', px: 2, fontSize: '0.78rem' }}
           >
             Offline
           </Typography>
-          <Box sx={{ flex: 1, height: '1px', backgroundColor: 'rgba(0,0,0,0.1)' }} />
+          <Box sx={{ flex: 1, height: '1px', backgroundColor: 'divider' }} />
         </Box>
       )}
 

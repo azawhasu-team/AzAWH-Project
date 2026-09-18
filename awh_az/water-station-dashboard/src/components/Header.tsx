@@ -1,11 +1,14 @@
 'use client';
 
-import { AppBar, Toolbar, Box, Typography, Button, Link as MuiLink } from '@mui/material';
+import { AppBar, Toolbar, Box, Typography, Button, Link as MuiLink, IconButton, Tooltip } from '@mui/material';
+import { DarkMode as DarkModeIcon, LightMode as LightModeIcon } from '@mui/icons-material';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useColorMode } from '@/lib/colorMode';
 
 export default function Header() {
   const router = useRouter();
+  const { mode, toggleMode } = useColorMode();
 
   const handleSignOut = async () => {
     await fetch('/api/logout', { method: 'POST' });
@@ -197,6 +200,21 @@ export default function Header() {
               Visit Website
             </Button>
           </MuiLink>
+
+          <Tooltip title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+            <IconButton
+              onClick={toggleMode}
+              size="small"
+              aria-label="Toggle color mode"
+              sx={{
+                ml: { xs: 0, md: 0.5 },
+                color: 'text.secondary',
+                '&:hover': { color: 'primary.main' },
+              }}
+            >
+              {mode === 'dark' ? <LightModeIcon fontSize="small" /> : <DarkModeIcon fontSize="small" />}
+            </IconButton>
+          </Tooltip>
 
           <Button
             onClick={handleSignOut}

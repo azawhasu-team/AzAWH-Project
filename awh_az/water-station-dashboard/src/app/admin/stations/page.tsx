@@ -46,6 +46,7 @@ interface EditState {
   display_name: string;
   description: string;
   hidden: boolean;
+  expected_production_lday: string;
 }
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -54,9 +55,15 @@ interface NewStationForm {
   station_name: string;
   display_name: string;
   description: string;
+  expected_production_lday: string;
 }
 
-const EMPTY_NEW_STATION: NewStationForm = { station_name: '', display_name: '', description: '' };
+const EMPTY_NEW_STATION: NewStationForm = {
+  station_name: '',
+  display_name: '',
+  description: '',
+  expected_production_lday: '',
+};
 
 export default function AdminStationsPage() {
   const [stations, setStations] = useState<AdminStationRow[]>([]);
@@ -86,6 +93,8 @@ export default function AdminStationsPage() {
         display_name: s.display_name || '',
         description: s.description || '',
         hidden: Boolean(s.hidden),
+        expected_production_lday:
+          s.expected_production_lday != null ? String(s.expected_production_lday) : '',
       };
     }
     setEdits(initialEdits);
@@ -139,6 +148,9 @@ export default function AdminStationsPage() {
           station_name,
           display_name: newStation.display_name.trim() || null,
           description: newStation.description.trim() || null,
+          expected_production_lday: newStation.expected_production_lday.trim()
+            ? Number(newStation.expected_production_lday)
+            : null,
         }),
       });
       const data = await res.json();
@@ -191,6 +203,9 @@ export default function AdminStationsPage() {
           display_name: edit.display_name || null,
           description: edit.description || null,
           hidden: edit.hidden,
+          expected_production_lday: edit.expected_production_lday.trim()
+            ? Number(edit.expected_production_lday)
+            : null,
         }),
       });
       if (!res.ok) throw new Error(`Save failed (${res.status})`);
@@ -198,7 +213,15 @@ export default function AdminStationsPage() {
       setStations((prev) =>
         prev.map((s) =>
           s.station_name === stationName
-            ? { ...s, display_name: edit.display_name, description: edit.description, hidden: edit.hidden }
+            ? {
+                ...s,
+                display_name: edit.display_name,
+                description: edit.description,
+                hidden: edit.hidden,
+                expected_production_lday: edit.expected_production_lday.trim()
+                  ? Number(edit.expected_production_lday)
+                  : null,
+              }
             : s
         )
       );
@@ -384,6 +407,19 @@ export default function AdminStationsPage() {
                     multiline
                     minRows={2}
                   />
+                  <TextField
+                    label="Expected production (L/day)"
+                    placeholder="e.g. 5"
+                    helperText="Rated/design capacity used to compare against actual harvest. Leave blank if unknown."
+                    value={edit.expected_production_lday}
+                    onChange={(e) =>
+                      updateEdit(station.station_name, { expected_production_lday: e.target.value })
+                    }
+                    size="small"
+                    type="number"
+                    inputProps={{ step: 'any', min: 0 }}
+                    fullWidth
+                  />
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <FormControlLabel
                       control={
@@ -489,6 +525,19 @@ export default function AdminStationsPage() {
               fullWidth
               multiline
               minRows={2}
+              disabled={addSaving}
+            />
+            <TextField
+              label="Expected production (L/day, optional)"
+              helperText="Rated/design capacity, if known. Can be set later."
+              value={newStation.expected_production_lday}
+              onChange={(e) =>
+                setNewStation((prev) => ({ ...prev, expected_production_lday: e.target.value }))
+              }
+              size="small"
+              type="number"
+              inputProps={{ step: 'any', min: 0 }}
+              fullWidth
               disabled={addSaving}
             />
           </Box>

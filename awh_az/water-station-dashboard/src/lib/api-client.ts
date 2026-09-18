@@ -46,6 +46,10 @@ export interface StationInfo {
   description?: string | null;
   image_url?: string | null;
   hidden?: boolean;
+  // Admin-entered rated/design capacity (L/day) — a static target compared
+  // against actual harvest, distinct from the live-conditions efficiency
+  // metric (see HARVESTING_EFFICIENCY_FORMULA.md in the backend repo).
+  expected_production_lday?: number | null;
 }
 
 export interface ReadingsResponse {

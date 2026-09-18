@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Typography, Box, Link as MuiLink, Skeleton, Alert } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import { ArrowForward } from '@mui/icons-material';
 import Link from 'next/link';
 import { apiClient, type StationInfo, type ImpactResponse } from '@/lib/api-client';
@@ -9,6 +10,14 @@ import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 import { filterVisibleStations } from '@/lib/hiddenStations';
 
 export default function Home() {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
+  // Stat-tile array colors are literal hex (borderColor/text on a plain Box,
+  // not theme tokens), so they need their own light/dark pair — brand red
+  // and gold only, no separate palette for dark mode.
+  const statRed = isDark ? '#e5484d' : '#901340';
+  const statGreen = isDark ? '#4caf50' : '#2e7d32';
+  const statGold = '#ffcb25';
   const [stations, setStations] = useState<StationInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -180,9 +189,13 @@ export default function Home() {
               position: 'relative',
               overflow: 'hidden',
               borderRadius: 3,
-              border: '1px solid rgba(0,0,0,0.08)',
-              backgroundColor: '#fff',
-              boxShadow: '0 8px 32px rgba(144,19,64,0.06)',
+              border: '1px solid',
+              borderColor: 'divider',
+              backgroundColor: 'background.paper',
+              boxShadow: (theme) =>
+                theme.palette.mode === 'dark'
+                  ? '0 8px 32px rgba(0,0,0,0.4)'
+                  : '0 8px 32px rgba(144,19,64,0.06)',
               py: { xs: 4, md: 5 },
               px: { xs: 2, md: 4 },
               '&::before': {
@@ -198,7 +211,7 @@ export default function Home() {
           >
             <Typography
               variant="overline"
-              sx={{ color: '#901340', letterSpacing: 3, fontWeight: 700, fontSize: '0.8rem' }}
+              sx={{ color: 'primary.main', letterSpacing: 3, fontWeight: 700, fontSize: '0.8rem' }}
             >
               Real-World Impact
             </Typography>
@@ -210,7 +223,10 @@ export default function Home() {
                 mt: 0.5,
                 mb: 0.5,
                 lineHeight: 1.1,
-                background: 'linear-gradient(90deg, #901340, #b8336a)',
+                background: (theme) =>
+                  theme.palette.mode === 'dark'
+                    ? 'linear-gradient(90deg, #e5484d, #ffcb25)'
+                    : 'linear-gradient(90deg, #901340, #b8336a)',
                 WebkitBackgroundClip: 'text',
                 WebkitTextFillColor: 'transparent',
                 backgroundClip: 'text',
@@ -218,7 +234,7 @@ export default function Home() {
             >
               {impact.total_liters.toLocaleString(undefined, { maximumFractionDigits: 1 })} L
             </Typography>
-            <Typography variant="h6" sx={{ color: '#191919', fontWeight: 400, mb: 0.5, fontSize: '1.05rem' }}>
+            <Typography variant="h6" sx={{ color: 'text.primary', fontWeight: 400, mb: 0.5, fontSize: '1.05rem' }}>
               of water harvested directly from the air — and counting
             </Typography>
             <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2.5 }}>
@@ -230,15 +246,18 @@ export default function Home() {
                 <Box
                   key={s.station_name}
                   sx={{
-                    background: 'rgba(144,19,64,0.05)',
-                    border: '1px solid rgba(144,19,64,0.1)',
+                    background: (theme) =>
+                      theme.palette.mode === 'dark' ? 'rgba(224,103,154,0.1)' : 'rgba(144,19,64,0.05)',
+                    border: '1px solid',
+                    borderColor: (theme) =>
+                      theme.palette.mode === 'dark' ? 'rgba(224,103,154,0.25)' : 'rgba(144,19,64,0.1)',
                     borderRadius: 2,
                     px: 3,
                     py: 1.25,
                     minWidth: 180,
                   }}
                 >
-                  <Typography sx={{ color: '#901340', fontWeight: 700, fontSize: '1.3rem' }}>
+                  <Typography sx={{ color: 'primary.main', fontWeight: 700, fontSize: '1.3rem' }}>
                     {s.total_liters.toLocaleString(undefined, { maximumFractionDigits: 1 })} L
                   </Typography>
                   <Typography sx={{ color: 'text.secondary', fontSize: '0.78rem' }}>
@@ -262,13 +281,13 @@ export default function Home() {
                   alignItems: 'center',
                   gap: 0.5,
                   mt: 3,
-                  color: '#901340',
+                  color: 'primary.main',
                   fontWeight: 700,
                   fontSize: '0.95rem',
                   borderBottom: '2px solid transparent',
                   transition: 'border-color 150ms ease, gap 150ms ease',
                   '&:hover': {
-                    borderColor: '#901340',
+                    borderColor: 'primary.main',
                     gap: 1,
                   },
                 }}
@@ -291,11 +310,11 @@ export default function Home() {
             mb: 5,
           }}
         >
-          <Box sx={{ flex: 1, height: '2px', background: 'linear-gradient(to right, transparent, #901340, transparent)' }} />
+          <Box sx={{ flex: 1, height: '2px', background: (theme) => `linear-gradient(to right, transparent, ${theme.palette.primary.main}, transparent)` }} />
           <Typography
             variant="body2"
             sx={{
-              color: '#901340',
+              color: 'primary.main',
               fontWeight: 600,
               textTransform: 'uppercase',
               letterSpacing: '2px',
@@ -304,7 +323,7 @@ export default function Home() {
           >
             LIVE STATISTICS
           </Typography>
-          <Box sx={{ flex: 1, height: '2px', background: 'linear-gradient(to right, transparent, #901340, transparent)' }} />
+          <Box sx={{ flex: 1, height: '2px', background: (theme) => `linear-gradient(to right, transparent, ${theme.palette.primary.main}, transparent)` }} />
         </Box>
 
         {/* Stats Row — static grid. Was an auto-scrolling marquee; replaced
@@ -313,30 +332,33 @@ export default function Home() {
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(5, 1fr)' },
+            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(6, 1fr)' },
             gap: 3,
           }}
         >
           {[
-            { value: String(stationCards.length), label: 'Total Stations', color: '#901340' },
-            { value: String(stationCards.filter(s => s.status === 'Online').length), label: 'Online Now', color: '#2e7d32' },
-            { value: '12+', label: 'Parameters Tracked', color: '#ffcb25' },
-            { value: '24/7', label: 'Real-time Monitoring', color: '#901340' },
-            { value: impact ? `${impact.total_liters.toLocaleString(undefined, { maximumFractionDigits: 0 })} L` : '—', label: 'Harvested Lifetime', color: '#ffcb25' },
+            { value: String(stationCards.length), label: 'Total Stations', color: statRed },
+            { value: String(stationCards.filter(s => s.status === 'Online').length), label: 'Online Now', color: statGreen },
+            { value: '12+', label: 'Parameters Tracked', color: statGold },
+            { value: '24/7', label: 'Real-time Monitoring', color: statRed },
+            { value: '1.5M+', label: 'Readings Collected', color: statGold },
+            { value: impact ? `${impact.total_liters.toLocaleString(undefined, { maximumFractionDigits: 0 })} L` : '—', label: 'Harvested Lifetime', color: statRed },
           ].map((stat, i) => (
             <Box
               key={i}
               sx={{
                 textAlign: 'center',
                 p: 4,
-                background: '#ffffff',
+                background: 'background.paper',
                 borderRadius: 2,
                 border: '2px solid',
                 borderColor: stat.color,
-                boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                boxShadow: (theme) =>
+                  theme.palette.mode === 'dark' ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 8px rgba(0,0,0,0.06)',
                 transition: 'box-shadow 200ms ease, transform 200ms ease',
                 '&:hover': {
-                  boxShadow: '0 6px 20px rgba(0,0,0,0.1)',
+                  boxShadow: (theme) =>
+                    theme.palette.mode === 'dark' ? '0 6px 20px rgba(0,0,0,0.45)' : '0 6px 20px rgba(0,0,0,0.1)',
                   transform: 'translateY(-3px)',
                 },
               }}
@@ -344,7 +366,7 @@ export default function Home() {
               <Typography variant="h3" sx={{ fontWeight: 700, color: stat.color, mb: 1.5, fontSize: '2.5rem' }}>
                 {stat.value}
               </Typography>
-              <Typography variant="body2" sx={{ color: '#484848', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 600, fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                 {stat.label}
               </Typography>
             </Box>

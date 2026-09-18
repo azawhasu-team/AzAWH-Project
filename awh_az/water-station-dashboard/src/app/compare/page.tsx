@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Typography,
@@ -22,6 +22,7 @@ import {
   InputLabel,
   type SelectChangeEvent,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import {
   WaterDrop,
   Bolt,
@@ -31,6 +32,7 @@ import {
   EmojiEvents,
   CalendarMonth,
   TuneRounded,
+  CompareArrows,
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import {
@@ -80,7 +82,7 @@ function MetricBar({
       <Typography sx={{ fontWeight: 700, fontSize: '0.9rem', fontVariantNumeric: 'tabular-nums' }}>
         {label}
       </Typography>
-      <Box sx={{ height: 6, borderRadius: 3, backgroundColor: 'rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+      <Box sx={{ height: 6, borderRadius: 3, backgroundColor: 'action.hover', overflow: 'hidden' }}>
         <Box sx={{ height: '100%', width: `${pct}%`, borderRadius: 3, backgroundColor: color, transition: 'width 300ms ease' }} />
       </Box>
     </Box>
@@ -162,6 +164,16 @@ function summarizeWindow(rows: HourlyDataRow[]) {
 type Measurement = 'total' | 'production' | 'energy' | 'efficiency';
 type VolumeUnit = 'L' | 'gal' | 'acre-ft';
 type RangePreset = '7d' | '30d' | '90d' | 'all' | 'custom';
+// 'same-time' plots every station over the identical calendar window —
+// the more rigorous comparison, since it holds external conditions (season,
+// weather) roughly constant, but stations that weren't running yet or have
+// since gone offline will show no data. 'per-station' instead gives each
+// station a window of the same *length* ending at its own last reading, so
+// units that were never running concurrently (the lab periodically switches
+// and relocates stations) can still be compared. Both are legitimate
+// comparisons for different questions, so this is a user choice, not a
+// setting one mode supersedes.
+type AlignMode = 'same-time' | 'per-station';
 
 const MEASUREMENTS: { key: Measurement; label: string; color: string; colorEnd: string; usesVolumeUnit: boolean; Icon: typeof WaterDrop }[] = [
   { key: 'total', label: 'Total water produced', color: '#901340', colorEnd: '#c94a76', usesVolumeUnit: true, Icon: WaterDrop },
@@ -185,10 +197,11 @@ function tint(hex: string, alpha: number): string {
 // with "color follows the entity" rather than a generic gray MUI default.
 function rangeToggleSx(color: string) {
   return {
-    backgroundColor: 'white',
+    backgroundColor: 'background.paper',
     borderRadius: 2,
     '& .MuiToggleButton-root': {
-      border: '1px solid rgba(0,0,0,0.1)',
+      border: '1px solid',
+      borderColor: 'divider',
       fontWeight: 700,
       fontSize: '0.78rem',
       color: 'text.secondary',
@@ -268,16 +281,19 @@ interface ChartTooltipProps {
 }
 
 function ChartTooltip({ active, payload, measurement, unit, color, showHumidity }: ChartTooltipProps) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
   if (!active || !payload || payload.length === 0) return null;
   const point = payload[0].payload;
   if (point.mean == null) return null;
   return (
     <Box
       sx={{
-        backgroundColor: 'rgba(255,255,255,0.98)',
-        border: '1px solid rgba(0,0,0,0.08)',
+        backgroundColor: isDark ? 'rgba(30,30,30,0.98)' : 'rgba(255,255,255,0.98)',
+        border: '1px solid',
+        borderColor: 'divider',
         borderRadius: '12px',
-        boxShadow: '0 12px 32px rgba(0,0,0,0.16)',
+        boxShadow: isDark ? '0 12px 32px rgba(0,0,0,0.5)' : '0 12px 32px rgba(0,0,0,0.16)',
         padding: '12px 16px',
         borderTop: `3px solid ${color}`,
       }}
@@ -295,7 +311,7 @@ function ChartTooltip({ active, payload, measurement, unit, color, showHumidity 
       )}
       {point.latest != null && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5 }}>
-          <Box sx={{ width: 14, height: 2, backgroundColor: '#1a1a1a', flexShrink: 0 }} />
+          <Box sx={{ width: 14, height: 2, backgroundColor: 'text.primary', flexShrink: 0 }} />
           <Typography variant="caption" sx={{ fontWeight: 700 }}>
             {formatMeasurementValue(point.latest, measurement, unit)}{' '}
             <Box component="span" sx={{ color: 'text.secondary', fontWeight: 500 }}>latest hour</Box>
@@ -335,7 +351,8 @@ function StatTile({
       elevation={0}
       sx={{
         borderRadius: 2.5,
-        border: '1px solid rgba(0,0,0,0.07)',
+        border: '1px solid',
+        borderColor: 'divider',
         p: 2,
         display: 'flex',
         flexDirection: 'column',
@@ -377,6 +394,17 @@ function StatTile({
 }
 
 export default function ComparePage() {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
+  // Recharts takes literal color strings, not MUI theme tokens, so the
+  // chart chrome (grid, axes, tooltip, latest-hour marker) needs its own
+  // light/dark pair computed here instead of adapting automatically.
+  const chartGridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  const chartAxisLineColor = isDark ? 'rgba(255,255,255,0.2)' : '#e0e0e0';
+  const chartTickColor = isDark ? '#aaa' : '#666';
+  const chartTickColorMuted = '#888';
+  const chartMarkerColor = isDark ? '#f0f0f0' : '#1a1a1a';
+  const chartLegendColor = isDark ? theme.palette.text.secondary : '#484848';
   const [stations, setStations] = useState<StationInfo[]>([]);
   const [tableRows, setTableRows] = useState<StationComparison[]>([]);
   const [loading, setLoading] = useState(true);
@@ -384,6 +412,7 @@ export default function ComparePage() {
 
   // Top panel controls
   const [rangePreset, setRangePreset] = useState<RangePreset>('7d');
+  const [alignMode, setAlignMode] = useState<AlignMode>('same-time');
   const [customStart, setCustomStart] = useState<Date | null>(null);
   const [customEnd, setCustomEnd] = useState<Date | null>(null);
   const [measurement, setMeasurement] = useState<Measurement>('total');
@@ -393,14 +422,6 @@ export default function ComparePage() {
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
   const [slowLoad, setSlowLoad] = useState(false);
-
-  // Caches the raw hourly rows fetched for the fixed WINDOW_DAYS table below,
-  // keyed by station name. The chart's default view covers the same window
-  // (rangePreset 'd' === WINDOW_DAYS), so we reuse this instead of paying for
-  // a second identical fetch — each hourly call can take 30s+ when the
-  // backend is on its Firestore fallback (Postgres unreachable from Render),
-  // so avoiding a redundant one roughly halves first-load time.
-  const initialHourlyRef = useRef<Record<string, HourlyDataRow[]> | null>(null);
 
   // Load the station list + the fixed-window bottom table once.
   useEffect(() => {
@@ -412,12 +433,10 @@ export default function ComparePage() {
         const stationList = filterVisibleStations(await apiClient.getStations());
         const startDate = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-        const hourlyByStation: Record<string, HourlyDataRow[]> = {};
         const results = await Promise.all(
           stationList.map(async (station): Promise<StationComparison> => {
             try {
               const hourly = await apiClient.getHourlyAggregation(station.station_name, { start_date: startDate });
-              hourlyByStation[station.station_name] = hourly.data;
               const summary = summarizeWindow(hourly.data);
               return {
                 station,
@@ -429,7 +448,6 @@ export default function ComparePage() {
             } catch {
               // 404 (no readings in range) is expected for long-inactive stations —
               // show them as "no data," not as a page-level error.
-              hourlyByStation[station.station_name] = [];
               return {
                 station,
                 waterProducedL: null,
@@ -450,7 +468,6 @@ export default function ComparePage() {
           if (aOnline !== bOnline) return aOnline ? -1 : 1;
           return (b.waterProducedL ?? -1) - (a.waterProducedL ?? -1);
         });
-        initialHourlyRef.current = hourlyByStation;
         setStations(stationList);
         setTableRows(results);
         setError(null);
@@ -466,48 +483,48 @@ export default function ComparePage() {
     return () => clearTimeout(slowTimer);
   }, []);
 
-  // rangeStartISO/rangeEndISO of null means "no filter" — for 'all' that's
-  // deliberate (fetch full history), but for 'custom' with nothing picked
-  // yet it means "not ready to fetch". rangeReady disambiguates the two so
-  // the effect below doesn't mistake an unset custom picker for "all time".
-  const { rangeStartISO, rangeEndISO, rangeLabel, rangeReady } = useMemo(() => {
+  // rangeDurationDays: the window length in days (used by 'per-station'
+  // mode, and to derive the same-time absolute bounds for the preset
+  // buttons). null means "no filter" — true for the 'all' preset, and also
+  // the "not ready yet" state for an unset custom picker (rangeReady
+  // disambiguates the two).
+  // rangeStartISO/rangeEndISO: the literal absolute bounds used by
+  // 'same-time' mode — computed for every preset (not just custom) so
+  // switching modes on 7D/30D/90D works without extra state.
+  const { rangeDurationDays, rangeStartISO, rangeEndISO, rangeLabel, rangeReady } = useMemo(() => {
     if (rangePreset === 'custom') {
       if (!customStart || !customEnd) {
-        return { rangeStartISO: null, rangeEndISO: null, rangeLabel: 'Pick a custom range', rangeReady: false };
+        return { rangeDurationDays: null, rangeStartISO: null, rangeEndISO: null, rangeLabel: 'Pick a custom range', rangeReady: false };
       }
-      return {
-        rangeStartISO: customStart.toISOString(),
-        rangeEndISO: customEnd.toISOString(),
-        rangeLabel: `${format(customStart, 'MMM d, yyyy')} – ${format(customEnd, 'MMM d, yyyy')}`,
-        rangeReady: true,
-      };
+      const days = Math.max(1, Math.round((customEnd.getTime() - customStart.getTime()) / (24 * 60 * 60 * 1000)));
+      const label =
+        alignMode === 'same-time'
+          ? `${format(customStart, 'MMM d, yyyy')} – ${format(customEnd, 'MMM d, yyyy')} · same dates for every station`
+          : `${days}-day window · each station's most recent ${days} days of data`;
+      return { rangeDurationDays: days, rangeStartISO: customStart.toISOString(), rangeEndISO: customEnd.toISOString(), rangeLabel: label, rangeReady: true };
     }
     if (rangePreset === 'all') {
       // No start/end filter at all — each station's full history, so a
       // station that's been idle for the last 90 days still shows its
-      // real lifetime numbers instead of "no data in range".
-      return { rangeStartISO: null, rangeEndISO: null, rangeLabel: 'All time', rangeReady: true };
+      // real lifetime numbers instead of "no data in range". Same-time vs.
+      // per-station is moot here — both mean "everything ever recorded".
+      return { rangeDurationDays: null, rangeStartISO: null, rangeEndISO: null, rangeLabel: 'All time', rangeReady: true };
     }
     const days = RANGE_PRESET_DAYS[rangePreset];
     const end = new Date();
     const start = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    return { rangeStartISO: start.toISOString(), rangeEndISO: end.toISOString(), rangeLabel: `Last ${days} days`, rangeReady: true };
-  }, [rangePreset, customStart, customEnd]);
+    const label =
+      alignMode === 'same-time' ? `Last ${days} days · same dates for every station` : `Last ${days} days · each station's most recent data`;
+    return { rangeDurationDays: days, rangeStartISO: start.toISOString(), rangeEndISO: end.toISOString(), rangeLabel: label, rangeReady: true };
+  }, [rangePreset, customStart, customEnd, alignMode]);
 
-  // Re-fetch hourly data for the chart whenever the selected range changes.
-  // Deliberately independent of the bottom table's fixed WINDOW_DAYS fetch.
+  // Re-fetch hourly data for the chart whenever the selected range or
+  // alignment mode changes. Deliberately independent of the bottom table's
+  // fixed WINDOW_DAYS fetch — that table always uses today's date for every
+  // station, which neither mode here does exactly.
   useEffect(() => {
     if (!rangeReady || stations.length === 0) return;
     let cancelled = false;
-
-    // The default range matches the table's fixed WINDOW_DAYS fetch exactly —
-    // reuse that data instead of re-fetching the same hourly rows a second time.
-    if (rangePreset === '7d' && initialHourlyRef.current) {
-      setChartHourly(initialHourlyRef.current);
-      setChartError(null);
-      setChartLoading(false);
-      return;
-    }
 
     async function loadChart() {
       setChartLoading(true);
@@ -515,10 +532,27 @@ export default function ComparePage() {
         const results = await Promise.all(
           stations.map(async (station) => {
             try {
-              const hourly = await apiClient.getHourlyAggregation(station.station_name, {
-                start_date: rangeStartISO ?? undefined,
-                end_date: rangeEndISO ?? undefined,
-              });
+              let start_date: string | undefined;
+              let end_date: string | undefined;
+              if (alignMode === 'same-time') {
+                // Identical bounds for every station — the rigorous
+                // apples-to-apples comparison, at the cost of showing
+                // nothing for a station that wasn't running in this window.
+                start_date = rangeStartISO ?? undefined;
+                end_date = rangeEndISO ?? undefined;
+              } else if (rangeDurationDays != null) {
+                const lastReading = station.metadata.last_reading;
+                if (!lastReading) {
+                  // Never reported anything — no data point to anchor a
+                  // trailing window to, regardless of duration.
+                  return [station.station_name, []] as const;
+                }
+                const end = new Date(lastReading);
+                const start = new Date(end.getTime() - rangeDurationDays * 24 * 60 * 60 * 1000);
+                start_date = start.toISOString();
+                end_date = end.toISOString();
+              }
+              const hourly = await apiClient.getHourlyAggregation(station.station_name, { start_date, end_date });
               return [station.station_name, hourly.data] as const;
             } catch {
               return [station.station_name, []] as const;
@@ -538,9 +572,39 @@ export default function ComparePage() {
     return () => {
       cancelled = true;
     };
-  }, [stations, rangeStartISO, rangeEndISO, rangePreset, rangeReady]);
+  }, [stations, rangeDurationDays, rangeStartISO, rangeEndISO, rangeReady, alignMode]);
 
   const activeMeasurement = MEASUREMENTS.find((m) => m.key === measurement)!;
+
+  // Estimate, not a confirmed team decision yet — revisit once settled.
+  const DOWNTIME_MIN_HOURS = 2;
+
+  // Drops hours that fall inside a run of >= DOWNTIME_MIN_HOURS consecutive
+  // zero-production hours, so a station's normal idle/powered-down stretches
+  // don't pull its "production" mean down the way a plain average would.
+  // This changes what the mean answers: "average output per hour including
+  // downtime" (unfiltered) vs. "average output per hour while actively
+  // running" (filtered) — only applied to the `production` measurement,
+  // since `total` is a sum where a zero hour already contributes correctly.
+  // Cannot yet distinguish a real idle period (pump off, unit powered down)
+  // from a dead/frozen sensor reporting a flat zero — both look identical
+  // as "0 L this hour" from the aggregated data available here.
+  function excludeDowntime(rows: HourlyDataRow[]): HourlyDataRow[] {
+    const kept: HourlyDataRow[] = [];
+    let i = 0;
+    while (i < rows.length) {
+      if (rows[i].water_produced_L === 0) {
+        let j = i;
+        while (j < rows.length && rows[j].water_produced_L === 0) j++;
+        if (j - i < DOWNTIME_MIN_HOURS) kept.push(...rows.slice(i, j));
+        i = j;
+      } else {
+        kept.push(rows[i]);
+        i++;
+      }
+    }
+    return kept;
+  }
 
   // Total = sum of hourly values across the range (a running total, same
   // quantity as the bottom table's Water Produced column). The other three
@@ -558,7 +622,8 @@ export default function ComparePage() {
     return stations.map((station) => {
       const displayName = station.display_name || station.station_name.replace(/^station_/, '');
       const rows = chartHourly[station.station_name] || [];
-      const values = rows.map((r) => r[fieldKey]).filter((v): v is number => v != null);
+      const effectiveRows = measurement === 'production' ? excludeDowntime(rows) : rows;
+      const values = effectiveRows.map((r) => r[fieldKey]).filter((v): v is number => v != null);
 
       // Mean absolute humidity at intake across the same hours — the ambient
       // condition backing whatever measurement is plotted. Computed here
@@ -633,7 +698,7 @@ export default function ComparePage() {
             recomputes station data without its usual fast database connection.
           </Typography>
         )}
-        <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid rgba(0,0,0,0.08)', p: 2 }}>
+        <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider', p: 2 }}>
           {Array.from({ length: 6 }).map((_, i) => (
             <Box key={i} sx={{ display: 'flex', gap: 3, alignItems: 'center', py: 1.5 }}>
               <Skeleton variant="text" width={200} height={32} />
@@ -681,7 +746,7 @@ export default function ComparePage() {
             fontWeight: 800,
             mb: 1,
             textAlign: 'center',
-            background: 'linear-gradient(90deg, #901340, #5c6bc0)',
+            background: (t) => t.palette.mode === 'dark' ? 'linear-gradient(90deg, #e5484d, #9fa8da)' : 'linear-gradient(90deg, #901340, #5c6bc0)',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
@@ -689,7 +754,7 @@ export default function ComparePage() {
         >
           Compare Stations
         </Typography>
-        <Typography variant="body1" sx={{ color: '#484848', mb: 4, textAlign: 'center' }}>
+        <Typography variant="body1" sx={{ color: 'text.secondary', mb: 4, textAlign: 'center' }}>
           Water produced, harvesting efficiency, and specific energy consumption across every station
         </Typography>
       </motion.div>
@@ -739,7 +804,8 @@ export default function ComparePage() {
           elevation={0}
           sx={{
             borderRadius: 3,
-            border: '1px solid rgba(0,0,0,0.08)',
+            border: '1px solid',
+            borderColor: 'divider',
             p: { xs: 2.5, md: 3.5 },
             mb: 4,
             position: 'relative',
@@ -789,8 +855,9 @@ export default function ComparePage() {
               mb: 3,
               p: 2,
               borderRadius: 2.5,
-              backgroundColor: 'rgba(0,0,0,0.02)',
-              border: '1px solid rgba(0,0,0,0.05)',
+              backgroundColor: 'action.hover',
+              border: '1px solid',
+              borderColor: 'divider',
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -810,20 +877,41 @@ export default function ComparePage() {
               </ToggleButtonGroup>
             </Box>
 
+            {rangePreset !== 'all' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <CompareArrows sx={{ fontSize: 18, color: 'text.disabled' }} />
+                <ToggleButtonGroup
+                  exclusive
+                  size="small"
+                  value={alignMode}
+                  onChange={(_, v: AlignMode | null) => v && setAlignMode(v)}
+                  sx={rangeToggleSx('#5c6bc0')}
+                >
+                  <ToggleButton value="same-time">Same dates</ToggleButton>
+                  <ToggleButton value="per-station">Per-station</ToggleButton>
+                </ToggleButtonGroup>
+              </Box>
+            )}
+
             {rangePreset === 'custom' && (
               <>
                 <DatePicker
                   label="Start"
                   value={customStart}
                   onChange={(v) => setCustomStart(v)}
-                  slotProps={{ textField: { size: 'small', sx: { width: 160, backgroundColor: 'white', borderRadius: 1.5 } } }}
+                  slotProps={{ textField: { size: 'small', sx: { width: 160, backgroundColor: 'background.paper', borderRadius: 1.5 } } }}
                 />
                 <DatePicker
                   label="End"
                   value={customEnd}
                   onChange={(v) => setCustomEnd(v)}
-                  slotProps={{ textField: { size: 'small', sx: { width: 160, backgroundColor: 'white', borderRadius: 1.5 } } }}
+                  slotProps={{ textField: { size: 'small', sx: { width: 160, backgroundColor: 'background.paper', borderRadius: 1.5 } } }}
                 />
+                <Typography variant="caption" sx={{ color: 'text.disabled', maxWidth: 220 }}>
+                  {alignMode === 'same-time'
+                    ? 'Exact calendar dates, applied to every station.'
+                    : 'Sets a window length (End − Start), applied to each station ending at its own last reading.'}
+                </Typography>
               </>
             )}
 
@@ -836,7 +924,7 @@ export default function ComparePage() {
                   label="Measurement"
                   value={measurement}
                   onChange={(e: SelectChangeEvent) => setMeasurement(e.target.value as Measurement)}
-                  sx={{ backgroundColor: 'white', borderRadius: 1.5 }}
+                  sx={{ backgroundColor: 'background.paper', borderRadius: 1.5 }}
                 >
                   {MEASUREMENTS.map((m) => (
                     <MenuItem key={m.key} value={m.key} sx={{ display: 'flex', gap: 1 }}>
@@ -887,15 +975,15 @@ export default function ComparePage() {
                       <stop offset="100%" stopColor={activeMeasurement.color} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid stroke="rgba(0,0,0,0.06)" vertical={false} />
+                  <CartesianGrid stroke={chartGridColor} vertical={false} />
                   <XAxis
                     dataKey="displayName"
                     interval={0}
                     angle={plottedData.length > 6 ? -30 : 0}
                     textAnchor={plottedData.length > 6 ? 'end' : 'middle'}
                     height={plottedData.length > 6 ? 56 : 30}
-                    tick={{ fontSize: 12, fill: '#666' }}
-                    axisLine={{ stroke: '#e0e0e0' }}
+                    tick={{ fontSize: 12, fill: chartTickColor }}
+                    axisLine={{ stroke: chartAxisLineColor }}
                     tickLine={false}
                   />
                   <YAxis
@@ -916,7 +1004,7 @@ export default function ComparePage() {
                         measurement === 'energy' ? (unit === 'acre-ft' ? 0 : 2) : unit === 'acre-ft' ? 4 : 1;
                       return `${v.toLocaleString(undefined, { maximumFractionDigits })} ${yUnitLabel}`;
                     }}
-                    tick={{ fontSize: 11, fill: '#888' }}
+                    tick={{ fontSize: 11, fill: chartTickColorMuted }}
                     axisLine={false}
                     tickLine={false}
                     width={90}
@@ -937,7 +1025,7 @@ export default function ComparePage() {
                   <Legend
                     wrapperStyle={{ fontSize: '0.78rem', paddingTop: 8 }}
                     iconType="rect"
-                    formatter={(value: string) => <span style={{ color: '#484848' }}>{value}</span>}
+                    formatter={(value: string) => <span style={{ color: chartLegendColor }}>{value}</span>}
                   />
                   <Bar
                     yAxisId="left"
@@ -951,7 +1039,7 @@ export default function ComparePage() {
                     activeBar={{ fill: activeMeasurement.color, stroke: activeMeasurement.colorEnd, strokeWidth: 2 }}
                   >
                     {measurement !== 'total' && (
-                      <ErrorBar dataKey="std" width={6} strokeWidth={1.5} stroke="#333" direction="y" />
+                      <ErrorBar dataKey="std" width={6} strokeWidth={1.5} stroke={chartMarkerColor} direction="y" />
                     )}
                     <LabelList
                       dataKey="mean"
@@ -959,7 +1047,7 @@ export default function ComparePage() {
                       formatter={(label: React.ReactNode) =>
                         typeof label === 'number' ? formatMeasurementValue(label, measurement, unit) : ''
                       }
-                      style={{ fontSize: 10, fill: '#666', fontWeight: 600 }}
+                      style={{ fontSize: 10, fill: chartTickColor, fontWeight: 600 }}
                     />
                   </Bar>
                   {measurement !== 'total' && (
@@ -974,7 +1062,7 @@ export default function ComparePage() {
                       dataKey="latest"
                       name="Latest hour"
                       legendType="line"
-                      fill="#1a1a1a"
+                      fill={chartMarkerColor}
                       shape={(props: { cx?: number; cy?: number }) => {
                         const { cx, cy } = props;
                         if (cx == null || cy == null) return <g />;
@@ -984,7 +1072,7 @@ export default function ComparePage() {
                             x2={cx + 14}
                             y1={cy}
                             y2={cy}
-                            stroke="#1a1a1a"
+                            stroke={chartMarkerColor}
                             strokeWidth={3}
                             strokeLinecap="round"
                           />
@@ -1011,11 +1099,14 @@ export default function ComparePage() {
           <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 1 }}>
             Right axis: absolute humidity at intake (g/m³) — independent scale, shown for environmental context only.
             {measurement !== 'total' && ' The black tick on each bar is that station’s latest hour — compare it to the bar (the period average) to see whether a station is currently running above or below its own norm.'}
+            {rangePreset !== 'all' && alignMode === 'per-station' && ' Each bar covers that station’s own most recent window — stations that started reporting at different times, or have since gone offline, still compare fairly rather than one being excluded for having no data in a shared calendar range.'}
+            {rangePreset !== 'all' && alignMode === 'same-time' && ' Every bar covers the identical calendar window, so a station that wasn’t running yet (or has since gone offline) may show no data below — switch to “Per-station” to compare it using its own most recent window instead.'}
           </Typography>
 
           {missingCount > 0 && (
             <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 1.5 }}>
-              {missingCount} station{missingCount === 1 ? '' : 's'} excluded — no data in this range.
+              {missingCount} station{missingCount === 1 ? '' : 's'} excluded —{' '}
+              {alignMode === 'same-time' ? 'no data in this shared date range.' : 'never reported any data.'}
             </Typography>
           )}
         </Paper>
@@ -1023,7 +1114,7 @@ export default function ComparePage() {
       )}
 
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.15 }}>
-      <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+      <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
         <Box sx={{ px: { xs: 2.5, md: 3.5 }, pt: 2.5 }}>
           <Typography variant="body2" sx={{ color: 'text.secondary' }}>
             Water Produced totals the last {WINDOW_DAYS} days · Harvesting Efficiency and Specific Energy Consumption show each station&apos;s latest hour
@@ -1046,7 +1137,7 @@ export default function ComparePage() {
                 <React.Fragment key={station.station_name}>
                   {i === firstOfflineIndex && firstOfflineIndex > 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} sx={{ py: 1, backgroundColor: 'rgba(0,0,0,0.03)', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
+                      <TableCell colSpan={6} sx={{ py: 1, backgroundColor: 'action.hover', borderBottom: '1px solid', borderColor: 'divider' }}>
                         <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', fontSize: '0.7rem' }}>
                           Offline
                         </Typography>
@@ -1056,7 +1147,7 @@ export default function ComparePage() {
                   <TableRow
                     hover
                     sx={{
-                      backgroundColor: i % 2 === 1 ? 'rgba(0,0,0,0.015)' : 'transparent',
+                      backgroundColor: i % 2 === 1 ? 'action.hover' : 'transparent',
                       borderLeft: `3px solid ${station.status === 'active' ? '#2e7d32' : 'transparent'}`,
                       transition: 'background-color 150ms ease',
                     }}
