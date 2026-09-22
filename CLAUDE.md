@@ -12,8 +12,10 @@
 **Lab:** SSEBE (School of Sustainable Engineering and the Built Environment), Arizona State University  
 **Owner/Author:** Mounusha Ram Metti — MS Data Science, ASU (GPA 4.0, Expected Dec 2026)  
 **Contact:** mmetti@asu.edu | mounushametti.vercel.app | github.com/Mounusha25  
-**Status as of May 2026:** Production operational — 70,000+ real sensor records across
-9 active monitoring stations and 14 environmental parameters. Research extension actively in development.
+**Status as of 2026-09-18:** Production operational — 1.58M+ real sensor records across
+9 deployed monitoring stations (1 currently reporting live data; the rest have gone inactive
+at various points but their full historical record remains served) and 14 environmental
+parameters. Research extension actively in development.
 
 ---
 
@@ -159,31 +161,60 @@ az_awh_dashboard/
 └── package.json       ← Next.js 15, React 19, TypeScript, Tailwind CSS
 ```
 
-### ⚠️ Production / deployment repo — read before pushing anything
+### ⚠️ Production / deployment repos — read before pushing anything
 
-**`https://github.com/azawhasu-team/AzAWH-Project`** (branch `main`) is the **only**
-repo Vercel deploys the live dashboard (`azawhdashboard.vercel.app`) from. **All
-commits and pushes — dashboard and monitoring-system code alike — go there and
-ONLY there.** As of 2026-09-09, do not push to `Mounusha25/az_awh_dashboard` or
-`Mounusha25/az_awh_monitoring_system` anymore; pushes to those repos do not
-reach production and will not show up on the live site.
+**As of 2026-09-22, `azawhasu-team/AzAWH-Project` is the main/canonical repo.**
+Every change — backend, dashboard, docs, anything — must be pushed there.
+Render's backend deploy is a separate, narrower exception layered on top of
+that (see below); it does not change the "push everything to the main repo"
+rule.
+
+- **Dashboard (Next.js, Vercel → `azawhdashboard.vercel.app`)** deploys **only**
+  from `https://github.com/azawhasu-team/AzAWH-Project` (branch `main`). Do not
+  push dashboard changes to `Mounusha25/az_awh_dashboard` expecting them to go
+  live — verified 2026-09-09 that they don't. Nothing reads from any
+  `Mounusha25/*` repo for the live dashboard.
+- **Backend (FastAPI, Render → `az-awh-monitoring-system.onrender.com`)**
+  still deploys from `https://github.com/Mounusha25/az_awh_monitoring_system`
+  (branch `main`) as of 2026-09-22 — confirmed 2026-09-12 by pushing an
+  `awh_az/backend/main.py` change there and watching Render redeploy. Render
+  has **not** been repointed at `azawhasu-team/AzAWH-Project`. This is the one
+  place `Mounusha25/az_awh_monitoring_system` still matters operationally; for
+  everything else it is legacy and nothing reads from it.
+
+**So the push rule is: every commit goes to `azawhasu-team/AzAWH-Project`
+(the main repo, required for all changes), and additionally to
+`Mounusha25/az_awh_monitoring_system` for backend/monitoring-system changes
+(required only so Render actually redeploys — that repo is otherwise not
+read by anything live).** A dashboard-only change still only needs the
+`azawhasu-team/AzAWH-Project` push. If unsure whether a push actually took
+effect, verify directly — curl the live backend's `/openapi.json` for the new
+path, or check the live dashboard — rather than assuming.
 
 This local checkout (`Mounusha25/az_awh_monitoring_system`, with
-`az_awh_dashboard` as a git submodule) remains the working copy for editing —
-just don't `git push` it. `azawhasu-team/AzAWH-Project` is a **monorepo** with
-the same top-level layout as this repo, but the dashboard lives there as
-regular tracked files at `awh_az/water-station-dashboard/`, not a submodule —
-and its git history is unrelated/diverged from both `Mounusha25` repos (confirmed
-via `git merge-base`), so a normal `git push` into it isn't possible from either
-local checkout. To ship a change:
+`az_awh_dashboard` as a git submodule) remains the working copy for editing.
+`azawhasu-team/AzAWH-Project` is a separate **monorepo** with the same
+top-level layout as this repo (confirmed: `awh_az/backend/` and
+`awh_az/water-station-dashboard/` both exist there), but its git history is
+unrelated/diverged from both `Mounusha25` repos (confirmed via
+`git merge-base`), so a normal `git push` into it isn't possible from this
+local checkout. To ship **any** change (backend or dashboard) there:
 
-1. Make/verify the change in this local checkout as normal.
+1. Make/verify the change in this local checkout as normal, and push it to
+   `Mounusha25/az_awh_monitoring_system` first if it's a backend change
+   (needed for Render).
 2. Clone `azawhasu-team/AzAWH-Project` fresh into a scratch directory.
 3. Diff the locally-changed files against that clone's copy at the matching
-   path (dashboard changes → `awh_az/water-station-dashboard/...`; monitoring-
-   system changes → same top-level path) to find exactly what changed —
+   path (backend: `awh_az/backend/...`; dashboard:
+   `awh_az/water-station-dashboard/...`) to find exactly what changed —
    exclude `.env*`, `next-env.d.ts`, `*.tsbuildinfo`, `node_modules`, `.next`.
 4. Copy just those files into the clone, `git add`/commit/push from there.
+
+Do this for **every** change now, not just dashboard ones — the old
+"backend-only changes just need `git push origin main` from this checkout"
+shortcut is no longer sufficient on its own; it still gets the Render deploy,
+but the change also needs to land in `azawhasu-team/AzAWH-Project` via the
+clone-diff-copy procedure above to be reflected in the main repo.
 
 ---
 
@@ -399,7 +430,7 @@ the demo entry point.
 | Pydantic data models (14 parameters) | ✅ Complete |
 | Docker + Render deployment | ✅ Production |
 | Next.js dashboard | ✅ Production |
-| 70,000+ real sensor records | ✅ Live |
+| 1.58M+ real sensor records (9 stations, 1 currently live) | ✅ Live |
 | Rule-based anomaly baseline (40% false-alert reduction) | ✅ Operational |
 | Kafka + Spark streaming layer (`research_extension/phase1_streaming/`) | ✅ Built (Week 1–2) |
 | Benchmark dataset (labeled, train/val/test split) | ✅ Built — 8 real stations, scoped to temperature/humidity/weight/power (`research_extension/phase2_models/`) |
