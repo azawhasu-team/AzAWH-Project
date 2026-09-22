@@ -46,7 +46,7 @@ interface EditState {
   display_name: string;
   description: string;
   hidden: boolean;
-  expected_production_lday: string;
+  expected_production_g_per_min: string;
 }
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -55,14 +55,14 @@ interface NewStationForm {
   station_name: string;
   display_name: string;
   description: string;
-  expected_production_lday: string;
+  expected_production_g_per_min: string;
 }
 
 const EMPTY_NEW_STATION: NewStationForm = {
   station_name: '',
   display_name: '',
   description: '',
-  expected_production_lday: '',
+  expected_production_g_per_min: '',
 };
 
 export default function AdminStationsPage() {
@@ -93,8 +93,8 @@ export default function AdminStationsPage() {
         display_name: s.display_name || '',
         description: s.description || '',
         hidden: Boolean(s.hidden),
-        expected_production_lday:
-          s.expected_production_lday != null ? String(s.expected_production_lday) : '',
+        expected_production_g_per_min:
+          s.expected_production_g_per_min != null ? String(s.expected_production_g_per_min) : '',
       };
     }
     setEdits(initialEdits);
@@ -148,8 +148,8 @@ export default function AdminStationsPage() {
           station_name,
           display_name: newStation.display_name.trim() || null,
           description: newStation.description.trim() || null,
-          expected_production_lday: newStation.expected_production_lday.trim()
-            ? Number(newStation.expected_production_lday)
+          expected_production_g_per_min: newStation.expected_production_g_per_min.trim()
+            ? Number(newStation.expected_production_g_per_min)
             : null,
         }),
       });
@@ -203,8 +203,8 @@ export default function AdminStationsPage() {
           display_name: edit.display_name || null,
           description: edit.description || null,
           hidden: edit.hidden,
-          expected_production_lday: edit.expected_production_lday.trim()
-            ? Number(edit.expected_production_lday)
+          expected_production_g_per_min: edit.expected_production_g_per_min.trim()
+            ? Number(edit.expected_production_g_per_min)
             : null,
         }),
       });
@@ -218,8 +218,8 @@ export default function AdminStationsPage() {
                 display_name: edit.display_name,
                 description: edit.description,
                 hidden: edit.hidden,
-                expected_production_lday: edit.expected_production_lday.trim()
-                  ? Number(edit.expected_production_lday)
+                expected_production_g_per_min: edit.expected_production_g_per_min.trim()
+                  ? Number(edit.expected_production_g_per_min)
                   : null,
               }
             : s
@@ -408,12 +408,12 @@ export default function AdminStationsPage() {
                     minRows={2}
                   />
                   <TextField
-                    label="Expected production (L/day)"
+                    label="Expected production (g/min)"
                     placeholder="e.g. 5"
                     helperText="Rated/design capacity used to compare against actual harvest. Leave blank if unknown."
-                    value={edit.expected_production_lday}
+                    value={edit.expected_production_g_per_min}
                     onChange={(e) =>
-                      updateEdit(station.station_name, { expected_production_lday: e.target.value })
+                      updateEdit(station.station_name, { expected_production_g_per_min: e.target.value })
                     }
                     size="small"
                     type="number"
@@ -528,11 +528,11 @@ export default function AdminStationsPage() {
               disabled={addSaving}
             />
             <TextField
-              label="Expected production (L/day, optional)"
+              label="Expected production (g/min, optional)"
               helperText="Rated/design capacity, if known. Can be set later."
-              value={newStation.expected_production_lday}
+              value={newStation.expected_production_g_per_min}
               onChange={(e) =>
-                setNewStation((prev) => ({ ...prev, expected_production_lday: e.target.value }))
+                setNewStation((prev) => ({ ...prev, expected_production_g_per_min: e.target.value }))
               }
               size="small"
               type="number"

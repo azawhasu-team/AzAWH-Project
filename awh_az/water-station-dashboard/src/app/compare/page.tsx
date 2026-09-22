@@ -393,6 +393,124 @@ function StatTile({
   );
 }
 
+// Estimate, not a confirmed team decision yet — revisit once settled.
+const DOWNTIME_MIN_HOURS = 2;
+
+// Drops hours that fall inside a run of >= DOWNTIME_MIN_HOURS consecutive
+// zero-production hours, so a station's (or a month's) normal idle/powered-
+// down stretches don't pull its "production" mean down the way a plain
+// average would. This changes what the mean answers: "average output per
+// hour including downtime" (unfiltered) vs. "average output per hour while
+// actively running" (filtered) — only applied to the `production`
+// measurement, since `total` is a sum where a zero hour already contributes
+// correctly. Cannot yet distinguish a real idle period (pump off, unit
+// powered down) from a dead/frozen sensor reporting a flat zero — both look
+// identical as "0 L this hour" from the aggregated data available here.
+function excludeDowntime(rows: HourlyDataRow[]): HourlyDataRow[] {
+  const kept: HourlyDataRow[] = [];
+  let i = 0;
+  while (i < rows.length) {
+    if (rows[i].water_produced_L === 0) {
+      let j = i;
+      while (j < rows.length && rows[j].water_produced_L === 0) j++;
+      if (j - i < DOWNTIME_MIN_HOURS) kept.push(...rows.slice(i, j));
+      i = j;
+    } else {
+      kept.push(rows[i]);
+      i++;
+    }
+  }
+  return kept;
+}
+
+// Builds one bar's worth of chart data (mean/std/latest/absHumidity) from a
+// set of hourly rows — shared between "compare stations" (one point per
+// station, same window) and "compare months" (one point per month, same
+// station) since the underlying math is identical either way: only what the
+// rows represent differs. Total = sum of hourly values across the range (a
+// running total). The other three measurements plot the mean of the hourly
+// values +/- one standard deviation, to show how much the rate actually
+// varies — a sum has no "variation" to show, so it gets no error bar.
+function buildComparisonPoint(
+  key: string,
+  displayName: string,
+  rows: HourlyDataRow[],
+  measurement: Measurement,
+  unit: VolumeUnit
+): ChartPoint {
+  const fieldKey: 'water_produced_L' | 'energy_per_liter_kWh_L' | 'harvesting_efficiency_pct_hourly' =
+    measurement === 'energy'
+      ? 'energy_per_liter_kWh_L'
+      : measurement === 'efficiency'
+      ? 'harvesting_efficiency_pct_hourly'
+      : 'water_produced_L';
+
+  const effectiveRows = measurement === 'production' ? excludeDowntime(rows) : rows;
+  const values = effectiveRows.map((r) => r[fieldKey]).filter((v): v is number => v != null);
+
+  // Mean absolute humidity at intake across the same hours — the ambient
+  // condition backing whatever measurement is plotted.
+  const ahValues = rows.map((r) => r.abs_humidity_intake_mean).filter((v): v is number => v != null);
+  const absHumidity = ahValues.length > 0 ? ahValues.reduce((a, b) => a + b, 0) / ahValues.length : null;
+
+  if (values.length === 0) {
+    return { stationName: key, displayName, mean: null, std: null, latest: null, absHumidity, hasData: false };
+  }
+
+  const isVolume = measurement === 'total' || measurement === 'production';
+  const convert = (v: number) =>
+    isVolume ? convertLiters(v, unit) : measurement === 'energy' ? convertSpecificEnergy(v, unit) : v;
+
+  if (measurement === 'total') {
+    // A sum-over-the-period has no "latest single hour" worth comparing it
+    // against — that comparison only makes sense for a rate/ratio.
+    const sum = values.reduce((a, b) => a + b, 0);
+    return { stationName: key, displayName, mean: convert(sum), std: null, latest: null, absHumidity, hasData: true };
+  }
+
+  const rawMean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance =
+    values.length > 1 ? values.reduce((acc, v) => acc + (v - rawMean) ** 2, 0) / (values.length - 1) : 0;
+  const rawStd = Math.sqrt(variance);
+  // rows (and therefore values, mapped/filtered in the same order) arrive
+  // chronologically ascending, so the last element is the most recent
+  // non-null hour — the "right now" reading, vs. the bar's period mean.
+  const rawLatest = values[values.length - 1];
+
+  return {
+    stationName: key,
+    displayName,
+    mean: convert(rawMean),
+    std: convert(rawStd),
+    latest: convert(rawLatest),
+    absHumidity,
+    hasData: true,
+  };
+}
+
+// A selected month is stored as its "yyyy-MM" key (sorts/dedupes as a plain
+// string, and round-trips through the DatePicker's Date value cleanly).
+function monthKeyOf(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatMonthLabel(key: string): string {
+  const [y, m] = key.split('-').map(Number);
+  return format(new Date(y, m - 1, 1), 'MMM yyyy');
+}
+
+// Calendar-month boundaries in UTC, passed straight through as the /hourly
+// start_date/end_date filter — same ISO-string contract the rest of this
+// page already uses for date-range fetches.
+function monthRangeISO(key: string): { start: string; end: string } {
+  const [y, m] = key.split('-').map(Number);
+  const start = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0));
+  const end = new Date(Date.UTC(y, m, 0, 23, 59, 59, 999)); // day 0 of next month = last day of this one
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+type CompareMode = 'stations' | 'months';
+
 export default function ComparePage() {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
@@ -422,6 +540,71 @@ export default function ComparePage() {
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
   const [slowLoad, setSlowLoad] = useState(false);
+
+  // "Compare months" mode: same chart, but the bars are different calendar
+  // months of ONE station instead of different stations.
+  const [compareMode, setCompareMode] = useState<CompareMode>('stations');
+  const [monthStationName, setMonthStationName] = useState<string>('');
+  const [selectedMonths, setSelectedMonths] = useState<string[]>([]); // 'yyyy-MM' keys
+  const [monthPickerValue, setMonthPickerValue] = useState<Date | null>(null);
+  const [monthlyHourly, setMonthlyHourly] = useState<Record<string, HourlyDataRow[]>>({});
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
+  const [monthlyError, setMonthlyError] = useState<string | null>(null);
+
+  // Default the month-mode station picker to the first station once the
+  // list loads, so switching to "Compare months" always has a station
+  // already selected instead of an empty chart.
+  useEffect(() => {
+    if (!monthStationName && stations.length > 0) {
+      setMonthStationName(stations[0].station_name);
+    }
+  }, [stations, monthStationName]);
+
+  function addMonth(date: Date | null) {
+    if (!date) return;
+    const key = monthKeyOf(date);
+    setSelectedMonths((prev) => (prev.includes(key) ? prev : [...prev, key].sort()));
+    setMonthPickerValue(null);
+  }
+
+  function removeMonth(key: string) {
+    setSelectedMonths((prev) => prev.filter((m) => m !== key));
+  }
+
+  // Fetch hourly data for each selected month of the selected station.
+  useEffect(() => {
+    if (compareMode !== 'months' || !monthStationName || selectedMonths.length === 0) return;
+    let cancelled = false;
+
+    async function loadMonths() {
+      setMonthlyLoading(true);
+      try {
+        const results = await Promise.all(
+          selectedMonths.map(async (key) => {
+            const { start, end } = monthRangeISO(key);
+            try {
+              const hourly = await apiClient.getHourlyAggregation(monthStationName, { start_date: start, end_date: end });
+              return [key, hourly.data] as const;
+            } catch {
+              // 404 (no readings that month) — show it as "no data", not a page error.
+              return [key, []] as const;
+            }
+          })
+        );
+        if (cancelled) return;
+        setMonthlyHourly(Object.fromEntries(results));
+        setMonthlyError(null);
+      } catch (err) {
+        if (!cancelled) setMonthlyError(err instanceof Error ? err.message : 'Failed to load monthly data');
+      } finally {
+        if (!cancelled) setMonthlyLoading(false);
+      }
+    }
+    loadMonths();
+    return () => {
+      cancelled = true;
+    };
+  }, [compareMode, monthStationName, selectedMonths]);
 
   // Load the station list + the fixed-window bottom table once.
   useEffect(() => {
@@ -523,7 +706,7 @@ export default function ComparePage() {
   // fixed WINDOW_DAYS fetch — that table always uses today's date for every
   // station, which neither mode here does exactly.
   useEffect(() => {
-    if (!rangeReady || stations.length === 0) return;
+    if (compareMode !== 'stations' || !rangeReady || stations.length === 0) return;
     let cancelled = false;
 
     async function loadChart() {
@@ -572,104 +755,37 @@ export default function ComparePage() {
     return () => {
       cancelled = true;
     };
-  }, [stations, rangeDurationDays, rangeStartISO, rangeEndISO, rangeReady, alignMode]);
+  }, [compareMode, stations, rangeDurationDays, rangeStartISO, rangeEndISO, rangeReady, alignMode]);
 
   const activeMeasurement = MEASUREMENTS.find((m) => m.key === measurement)!;
 
-  // Estimate, not a confirmed team decision yet — revisit once settled.
-  const DOWNTIME_MIN_HOURS = 2;
+  // One point per station, same window — see buildComparisonPoint above.
+  const chartData: ChartPoint[] = useMemo(
+    () =>
+      stations.map((station) => {
+        const displayName = station.display_name || station.station_name.replace(/^station_/, '');
+        const rows = chartHourly[station.station_name] || [];
+        return buildComparisonPoint(station.station_name, displayName, rows, measurement, unit);
+      }),
+    [stations, chartHourly, measurement, unit]
+  );
 
-  // Drops hours that fall inside a run of >= DOWNTIME_MIN_HOURS consecutive
-  // zero-production hours, so a station's normal idle/powered-down stretches
-  // don't pull its "production" mean down the way a plain average would.
-  // This changes what the mean answers: "average output per hour including
-  // downtime" (unfiltered) vs. "average output per hour while actively
-  // running" (filtered) — only applied to the `production` measurement,
-  // since `total` is a sum where a zero hour already contributes correctly.
-  // Cannot yet distinguish a real idle period (pump off, unit powered down)
-  // from a dead/frozen sensor reporting a flat zero — both look identical
-  // as "0 L this hour" from the aggregated data available here.
-  function excludeDowntime(rows: HourlyDataRow[]): HourlyDataRow[] {
-    const kept: HourlyDataRow[] = [];
-    let i = 0;
-    while (i < rows.length) {
-      if (rows[i].water_produced_L === 0) {
-        let j = i;
-        while (j < rows.length && rows[j].water_produced_L === 0) j++;
-        if (j - i < DOWNTIME_MIN_HOURS) kept.push(...rows.slice(i, j));
-        i = j;
-      } else {
-        kept.push(rows[i]);
-        i++;
-      }
-    }
-    return kept;
-  }
+  // One point per selected month, same station — the "compare months" mode.
+  const monthChartData: ChartPoint[] = useMemo(
+    () =>
+      selectedMonths.map((key) => {
+        const rows = monthlyHourly[key] || [];
+        return buildComparisonPoint(key, formatMonthLabel(key), rows, measurement, unit);
+      }),
+    [selectedMonths, monthlyHourly, measurement, unit]
+  );
 
-  // Total = sum of hourly values across the range (a running total, same
-  // quantity as the bottom table's Water Produced column). The other three
-  // measurements plot the mean of the hourly values +/- one standard
-  // deviation, to show how much each station's hourly rate actually varies
-  // — a sum has no "variation" to show, so it gets no error bar.
-  const chartData: ChartPoint[] = useMemo(() => {
-    const fieldKey: 'water_produced_L' | 'energy_per_liter_kWh_L' | 'harvesting_efficiency_pct_hourly' =
-      measurement === 'energy'
-        ? 'energy_per_liter_kWh_L'
-        : measurement === 'efficiency'
-        ? 'harvesting_efficiency_pct_hourly'
-        : 'water_produced_L';
-
-    return stations.map((station) => {
-      const displayName = station.display_name || station.station_name.replace(/^station_/, '');
-      const rows = chartHourly[station.station_name] || [];
-      const effectiveRows = measurement === 'production' ? excludeDowntime(rows) : rows;
-      const values = effectiveRows.map((r) => r[fieldKey]).filter((v): v is number => v != null);
-
-      // Mean absolute humidity at intake across the same hours — the ambient
-      // condition backing whatever measurement is plotted. Computed here
-      // (not fetched separately) since chartHourly already carries it.
-      const ahValues = rows.map((r) => r.abs_humidity_intake_mean).filter((v): v is number => v != null);
-      const absHumidity = ahValues.length > 0 ? ahValues.reduce((a, b) => a + b, 0) / ahValues.length : null;
-
-      if (values.length === 0) {
-        return { stationName: station.station_name, displayName, mean: null, std: null, latest: null, absHumidity, hasData: false };
-      }
-
-      const isVolume = measurement === 'total' || measurement === 'production';
-      const convert = (v: number) =>
-        isVolume ? convertLiters(v, unit) : measurement === 'energy' ? convertSpecificEnergy(v, unit) : v;
-
-      if (measurement === 'total') {
-        // A sum-over-the-period has no "latest single hour" worth comparing
-        // it against — that comparison only makes sense for a rate/ratio.
-        const sum = values.reduce((a, b) => a + b, 0);
-        return { stationName: station.station_name, displayName, mean: convert(sum), std: null, latest: null, absHumidity, hasData: true };
-      }
-
-      const rawMean = values.reduce((a, b) => a + b, 0) / values.length;
-      const variance =
-        values.length > 1 ? values.reduce((acc, v) => acc + (v - rawMean) ** 2, 0) / (values.length - 1) : 0;
-      const rawStd = Math.sqrt(variance);
-      // rows (and therefore values, mapped/filtered in the same order) arrive
-      // chronologically ascending, so the last element is the most recent
-      // non-null hour — the "right now" reading, vs. the bar's period mean.
-      const rawLatest = values[values.length - 1];
-
-      return {
-        stationName: station.station_name,
-        displayName,
-        mean: convert(rawMean),
-        std: convert(rawStd),
-        latest: convert(rawLatest),
-        absHumidity,
-        hasData: true,
-      };
-    });
-  }, [stations, chartHourly, measurement, unit]);
-
-  const plottedData = chartData.filter((d) => d.hasData);
-  const missingCount = chartData.length - plottedData.length;
+  const activeChartData = compareMode === 'months' ? monthChartData : chartData;
+  const plottedData = activeChartData.filter((d) => d.hasData);
+  const missingCount = activeChartData.length - plottedData.length;
   const yUnitLabel = measurement === 'energy' ? `kWh/${UNIT_LABEL[unit]}` : measurement === 'efficiency' ? '%' : UNIT_LABEL[unit];
+  const activeChartLoading = compareMode === 'months' ? monthlyLoading : chartLoading;
+  const activeChartError = compareMode === 'months' ? monthlyError : chartError;
 
   const quickStats = useMemo(() => {
     const liveCount = tableRows.filter((r) => freshnessOf(r.station.metadata.last_reading).label === 'Live').length;
@@ -752,14 +868,34 @@ export default function ComparePage() {
             backgroundClip: 'text',
           }}
         >
-          Compare Stations
+          {compareMode === 'months' ? 'Compare Months' : 'Compare Stations'}
         </Typography>
-        <Typography variant="body1" sx={{ color: 'text.secondary', mb: 4, textAlign: 'center' }}>
-          Water produced, harvesting efficiency, and specific energy consumption across every station
+        <Typography variant="body1" sx={{ color: 'text.secondary', mb: 3, textAlign: 'center' }}>
+          {compareMode === 'months'
+            ? "Water produced, harvesting efficiency, and specific energy consumption across a single station's months"
+            : 'Water produced, harvesting efficiency, and specific energy consumption across every station'}
         </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'center', mb: 4 }}>
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={compareMode}
+            onChange={(_, v: CompareMode | null) => v && setCompareMode(v)}
+            sx={rangeToggleSx('#901340')}
+          >
+            <ToggleButton value="stations">
+              <CompareArrows sx={{ fontSize: 16, mr: 0.75 }} />
+              Stations
+            </ToggleButton>
+            <ToggleButton value="months">
+              <CalendarMonth sx={{ fontSize: 16, mr: 0.75 }} />
+              Months
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
       </motion.div>
 
-      {tableRows.length > 0 && (
+      {compareMode === 'stations' && tableRows.length > 0 && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.05 }}>
           <Box
             sx={{
@@ -843,7 +979,13 @@ export default function ComparePage() {
             </Typography>
           </Box>
           <Typography variant="body2" sx={{ color: 'text.secondary', mb: 3, ml: 4.75 }}>
-            {activeMeasurement.label} · {rangeLabel} · by station
+            {compareMode === 'months'
+              ? `${activeMeasurement.label} · ${selectedMonths.length} month${selectedMonths.length === 1 ? '' : 's'} selected · ${
+                  stations.find((s) => s.station_name === monthStationName)?.display_name ||
+                  monthStationName.replace(/^station_/, '') ||
+                  'pick a station'
+                }`
+              : `${activeMeasurement.label} · ${rangeLabel} · by station`}
           </Typography>
 
           <Box
@@ -860,58 +1002,108 @@ export default function ComparePage() {
               borderColor: 'divider',
             }}
           >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <CalendarMonth sx={{ fontSize: 18, color: 'text.disabled' }} />
-              <ToggleButtonGroup
-                exclusive
-                size="small"
-                value={rangePreset}
-                onChange={(_, v: RangePreset | null) => v && setRangePreset(v)}
-                sx={rangeToggleSx('#1e88e5')}
-              >
-                <ToggleButton value="7d">7D</ToggleButton>
-                <ToggleButton value="30d">30D</ToggleButton>
-                <ToggleButton value="90d">90D</ToggleButton>
-                <ToggleButton value="all">All</ToggleButton>
-                <ToggleButton value="custom">Custom</ToggleButton>
-              </ToggleButtonGroup>
-            </Box>
-
-            {rangePreset !== 'all' && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <CompareArrows sx={{ fontSize: 18, color: 'text.disabled' }} />
-                <ToggleButtonGroup
-                  exclusive
-                  size="small"
-                  value={alignMode}
-                  onChange={(_, v: AlignMode | null) => v && setAlignMode(v)}
-                  sx={rangeToggleSx('#5c6bc0')}
-                >
-                  <ToggleButton value="same-time">Same dates</ToggleButton>
-                  <ToggleButton value="per-station">Per-station</ToggleButton>
-                </ToggleButtonGroup>
-              </Box>
-            )}
-
-            {rangePreset === 'custom' && (
+            {compareMode === 'stations' ? (
               <>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CalendarMonth sx={{ fontSize: 18, color: 'text.disabled' }} />
+                  <ToggleButtonGroup
+                    exclusive
+                    size="small"
+                    value={rangePreset}
+                    onChange={(_, v: RangePreset | null) => v && setRangePreset(v)}
+                    sx={rangeToggleSx('#1e88e5')}
+                  >
+                    <ToggleButton value="7d">7D</ToggleButton>
+                    <ToggleButton value="30d">30D</ToggleButton>
+                    <ToggleButton value="90d">90D</ToggleButton>
+                    <ToggleButton value="all">All</ToggleButton>
+                    <ToggleButton value="custom">Custom</ToggleButton>
+                  </ToggleButtonGroup>
+                </Box>
+
+                {rangePreset !== 'all' && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <CompareArrows sx={{ fontSize: 18, color: 'text.disabled' }} />
+                    <ToggleButtonGroup
+                      exclusive
+                      size="small"
+                      value={alignMode}
+                      onChange={(_, v: AlignMode | null) => v && setAlignMode(v)}
+                      sx={rangeToggleSx('#5c6bc0')}
+                    >
+                      <ToggleButton value="same-time">Same dates</ToggleButton>
+                      <ToggleButton value="per-station">Per-station</ToggleButton>
+                    </ToggleButtonGroup>
+                  </Box>
+                )}
+
+                {rangePreset === 'custom' && (
+                  <>
+                    <DatePicker
+                      label="Start"
+                      value={customStart}
+                      onChange={(v) => setCustomStart(v)}
+                      slotProps={{ textField: { size: 'small', sx: { width: 160, backgroundColor: 'background.paper', borderRadius: 1.5 } } }}
+                    />
+                    <DatePicker
+                      label="End"
+                      value={customEnd}
+                      onChange={(v) => setCustomEnd(v)}
+                      slotProps={{ textField: { size: 'small', sx: { width: 160, backgroundColor: 'background.paper', borderRadius: 1.5 } } }}
+                    />
+                    <Typography variant="caption" sx={{ color: 'text.disabled', maxWidth: 220 }}>
+                      {alignMode === 'same-time'
+                        ? 'Exact calendar dates, applied to every station.'
+                        : 'Sets a window length (End − Start), applied to each station ending at its own last reading.'}
+                    </Typography>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <FormControl size="small" sx={{ minWidth: 220 }}>
+                  <InputLabel id="compare-month-station-label">Station</InputLabel>
+                  <Select
+                    labelId="compare-month-station-label"
+                    label="Station"
+                    value={monthStationName}
+                    onChange={(e: SelectChangeEvent) => setMonthStationName(e.target.value)}
+                    sx={{ backgroundColor: 'background.paper', borderRadius: 1.5 }}
+                  >
+                    {stations.map((s) => (
+                      <MenuItem key={s.station_name} value={s.station_name}>
+                        {s.display_name || s.station_name.replace(/^station_/, '')}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+
                 <DatePicker
-                  label="Start"
-                  value={customStart}
-                  onChange={(v) => setCustomStart(v)}
+                  label="Add a month"
+                  views={['year', 'month']}
+                  openTo="month"
+                  value={monthPickerValue}
+                  onChange={(v) => addMonth(v)}
                   slotProps={{ textField: { size: 'small', sx: { width: 160, backgroundColor: 'background.paper', borderRadius: 1.5 } } }}
                 />
-                <DatePicker
-                  label="End"
-                  value={customEnd}
-                  onChange={(v) => setCustomEnd(v)}
-                  slotProps={{ textField: { size: 'small', sx: { width: 160, backgroundColor: 'background.paper', borderRadius: 1.5 } } }}
-                />
-                <Typography variant="caption" sx={{ color: 'text.disabled', maxWidth: 220 }}>
-                  {alignMode === 'same-time'
-                    ? 'Exact calendar dates, applied to every station.'
-                    : 'Sets a window length (End − Start), applied to each station ending at its own last reading.'}
-                </Typography>
+
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                  {selectedMonths.length === 0 ? (
+                    <Typography variant="caption" sx={{ color: 'text.disabled' }}>
+                      No months selected yet
+                    </Typography>
+                  ) : (
+                    selectedMonths.map((key) => (
+                      <Chip
+                        key={key}
+                        label={formatMonthLabel(key)}
+                        size="small"
+                        onDelete={() => removeMonth(key)}
+                        sx={{ fontWeight: 600, backgroundColor: 'background.paper', border: '1px solid', borderColor: 'divider' }}
+                      />
+                    ))
+                  )}
+                </Box>
               </>
             )}
 
@@ -952,16 +1144,22 @@ export default function ComparePage() {
 
           </Box>
 
-          {chartError ? (
-            <Alert severity="error">{chartError}</Alert>
+          {activeChartError ? (
+            <Alert severity="error">{activeChartError}</Alert>
+          ) : compareMode === 'months' && selectedMonths.length === 0 ? (
+            <Box sx={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Typography variant="body2" sx={{ color: 'text.disabled' }}>
+                Add a month above to get started
+              </Typography>
+            </Box>
           ) : plottedData.length === 0 ? (
             <Box sx={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Typography variant="body2" sx={{ color: 'text.disabled' }}>
-                {chartLoading ? 'Loading…' : 'No data for the selected range'}
+                {activeChartLoading ? 'Loading…' : 'No data for the selected range'}
               </Typography>
             </Box>
           ) : (
-            <Box sx={{ width: '100%', height: { xs: 320, sm: 380, md: 420 }, opacity: chartLoading ? 0.5 : 1, transition: 'opacity 200ms ease' }}>
+            <Box sx={{ width: '100%', height: { xs: 320, sm: 380, md: 420 }, opacity: activeChartLoading ? 0.5 : 1, transition: 'opacity 200ms ease' }}>
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
                   data={plottedData}
@@ -1098,21 +1296,28 @@ export default function ComparePage() {
 
           <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 1 }}>
             Right axis: absolute humidity at intake (g/m³) — independent scale, shown for environmental context only.
-            {measurement !== 'total' && ' The black tick on each bar is that station’s latest hour — compare it to the bar (the period average) to see whether a station is currently running above or below its own norm.'}
-            {rangePreset !== 'all' && alignMode === 'per-station' && ' Each bar covers that station’s own most recent window — stations that started reporting at different times, or have since gone offline, still compare fairly rather than one being excluded for having no data in a shared calendar range.'}
-            {rangePreset !== 'all' && alignMode === 'same-time' && ' Every bar covers the identical calendar window, so a station that wasn’t running yet (or has since gone offline) may show no data below — switch to “Per-station” to compare it using its own most recent window instead.'}
+            {measurement !== 'total' &&
+              ` The black tick on each bar is that ${compareMode === 'months' ? 'month' : 'station'}’s latest hour — compare it to the bar (the period average) to see whether it's currently running above or below its own norm.`}
+            {compareMode === 'stations' && rangePreset !== 'all' && alignMode === 'per-station' && ' Each bar covers that station’s own most recent window — stations that started reporting at different times, or have since gone offline, still compare fairly rather than one being excluded for having no data in a shared calendar range.'}
+            {compareMode === 'stations' && rangePreset !== 'all' && alignMode === 'same-time' && ' Every bar covers the identical calendar window, so a station that wasn’t running yet (or has since gone offline) may show no data below — switch to “Per-station” to compare it using its own most recent window instead.'}
           </Typography>
 
           {missingCount > 0 && (
             <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 1.5 }}>
-              {missingCount} station{missingCount === 1 ? '' : 's'} excluded —{' '}
-              {alignMode === 'same-time' ? 'no data in this shared date range.' : 'never reported any data.'}
+              {missingCount} {compareMode === 'months' ? 'month' : 'station'}
+              {missingCount === 1 ? '' : 's'} excluded —{' '}
+              {compareMode === 'months'
+                ? 'no data in that month.'
+                : alignMode === 'same-time'
+                ? 'no data in this shared date range.'
+                : 'never reported any data.'}
             </Typography>
           )}
         </Paper>
         </motion.div>
       )}
 
+      {compareMode === 'stations' && (
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.15 }}>
       <Paper elevation={0} sx={{ borderRadius: 3, border: '1px solid', borderColor: 'divider', overflow: 'hidden' }}>
         <Box sx={{ px: { xs: 2.5, md: 3.5 }, pt: 2.5 }}>
@@ -1226,6 +1431,7 @@ export default function ComparePage() {
         </TableContainer>
       </Paper>
       </motion.div>
+      )}
     </Box>
   );
 }

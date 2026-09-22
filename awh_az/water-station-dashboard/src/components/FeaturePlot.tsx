@@ -4,6 +4,8 @@ import React from 'react';
 import {
   AreaChart,
   Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -23,11 +25,20 @@ interface FeaturePlotProps {
   endDate: string;
   paramNames?: string[];
   paramUnits?: string[];
+  /** 'area' (default) for continuous raw-reading series; 'bar' for discrete
+   * hourly-aggregated series, where each point is its own hour's value rather
+   * than a sample of a continuous signal. */
+  chartType?: 'area' | 'bar';
 }
 
-const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, endDate, paramNames, paramUnits }) => {
+const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, endDate, paramNames, paramUnits, chartType = 'area' }) => {
+  const isBar = chartType === 'bar';
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
+  // recharts exports AreaChart/BarChart as distinct components, but both
+  // accept the same axis/grid/tooltip/legend children — swapping just the
+  // container (and the Area/Bar series below) is enough to switch chart types.
+  const ChartContainer = isBar ? BarChart : AreaChart;
   // Recharts takes literal color strings, not MUI theme tokens.
   const chartGridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
   const chartAxisStroke = isDark ? '#777' : '#bbb';
@@ -166,7 +177,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
       ) : (
         <Box sx={{ width: '100%', height: chartHeight }}>
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart
+            <ChartContainer
               data={plotData}
               margin={{ top: 10, right: hasSecondParam ? 70 : 20, left: 10, bottom: 60 }}
             >
@@ -252,31 +263,51 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
                 iconType="circle"
                 iconSize={10}
               />
-              <Area
-                yAxisId="left"
-                type="monotone"
-                dataKey="value"
-                stroke="#1e88e5"
-                strokeWidth={2}
-                fill="url(#grad1)"
-                dot={false}
-                activeDot={{ r: 5, fill: '#1e88e5', stroke: 'white', strokeWidth: 2 }}
-                name={param1Name}
-              />
-              {hasSecondParam && (
+              {isBar ? (
+                <Bar
+                  yAxisId="left"
+                  dataKey="value"
+                  fill="#1e88e5"
+                  radius={[3, 3, 0, 0]}
+                  name={param1Name}
+                />
+              ) : (
                 <Area
-                  yAxisId="right"
+                  yAxisId="left"
                   type="monotone"
-                  dataKey="value2"
-                  stroke="#e91e63"
+                  dataKey="value"
+                  stroke="#1e88e5"
                   strokeWidth={2}
-                  fill="url(#grad2)"
+                  fill="url(#grad1)"
                   dot={false}
-                  activeDot={{ r: 5, fill: '#e91e63', stroke: 'white', strokeWidth: 2 }}
-                  name={param2Name}
+                  activeDot={{ r: 5, fill: '#1e88e5', stroke: 'white', strokeWidth: 2 }}
+                  name={param1Name}
                 />
               )}
-            </AreaChart>
+              {hasSecondParam && (
+                isBar ? (
+                  <Bar
+                    yAxisId="right"
+                    dataKey="value2"
+                    fill="#e91e63"
+                    radius={[3, 3, 0, 0]}
+                    name={param2Name}
+                  />
+                ) : (
+                  <Area
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="value2"
+                    stroke="#e91e63"
+                    strokeWidth={2}
+                    fill="url(#grad2)"
+                    dot={false}
+                    activeDot={{ r: 5, fill: '#e91e63', stroke: 'white', strokeWidth: 2 }}
+                    name={param2Name}
+                  />
+                )
+              )}
+            </ChartContainer>
           </ResponsiveContainer>
         </Box>
       )}

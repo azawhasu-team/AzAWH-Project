@@ -1095,6 +1095,7 @@ export default function StationDetails() {
               endDate={format(endDate, 'yyyy-MM-dd')}
               paramNames={['Water Production Rate (Hourly)']}
               paramUnits={['L/h']}
+              chartType="bar"
             />
           )}
         </motion.div>
@@ -1113,6 +1114,7 @@ export default function StationDetails() {
             endDate={format(endDate, 'yyyy-MM-dd')}
             paramNames={['Specific Energy Consumption (Hourly)']}
             paramUnits={['kWh/L']}
+            chartType="bar"
           />
         </motion.div>
       )}
@@ -1130,6 +1132,7 @@ export default function StationDetails() {
             endDate={format(endDate, 'yyyy-MM-dd')}
             paramNames={['Harvesting Efficiency (Hourly)']}
             paramUnits={['%']}
+            chartType="bar"
           />
         </motion.div>
       )}
