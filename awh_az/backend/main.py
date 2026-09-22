@@ -365,6 +365,7 @@ async def get_stations():
             description=station_doc_data.get("description"),
             image_url=station_doc_data.get("image_url"),
             hidden=bool(station_doc_data.get("hidden", False)),
+            expected_production_g_per_min=station_doc_data.get("expected_production_g_per_min"),
         )
 
     # Fetch all stations in parallel — eliminates N sequential Firestore round-trips
@@ -835,7 +836,26 @@ def _compute_hourly_aggregation_sync(
     # being smoothed across the gap (there's no way to know when within the
     # gap it happened), but it is no longer silently discarded.
     WEIGHT_NOISE_FLOOR_G = 15  # see the water_produced_g note below for why
+    # The rate-based check (15g/2min == 7.5g/min) applies to every step while
+    # the station is reporting normally, no matter the exact gap — a delayed
+    # reading 5 or 20 minutes later is still "running," just slow to check
+    # in, and jitter shouldn't get a free pass just because the gap wasn't
+    # exactly 60s. Only once the gap is stale-for-real (station was offline
+    # for hours/days) does this stop applying — a genuine multi-day
+    # accumulation has a tiny per-minute rate despite being unambiguously
+    # real water, so scaling the floor there would wrongly zero it out. Past
+    # this cutoff the floor reverts to the flat 15g (see the note at the
+    # water delta check below).
+    WEIGHT_NOISE_RATE_APPLIES_UNDER_S = 3600.0  # 1 hour: "running" vs. "stale"
+    WEIGHT_NOISE_RATE_WINDOW_S = 120.0  # the "2 min" in "15g/2min"
+    WEIGHT_NOISE_RATE_G_PER_S = WEIGHT_NOISE_FLOOR_G / WEIGHT_NOISE_RATE_WINDOW_S
     ENERGY_WH_HEURISTIC_THRESHOLD_KWH = 20  # see the energy_consumed_kWh note below
+    # A real hour of operation draws on the order of 1kWh (these stations run
+    # ~1-1.5kW continuously); a bridged delta this small is more likely meter
+    # quantization/idle-draw noise than meaningful consumption, so it's
+    # excluded rather than plotted as if it were a real reading — same
+    # reasoning as the weight noise floor above, applied to energy instead.
+    ENERGY_NOISE_FLOOR_KWH = 0.1
 
     sorted_raw = sorted(raw, key=lambda r: r.get("timestamp", ""))
     water_delta_by_hour: dict[str, float] = defaultdict(float)
@@ -857,8 +877,20 @@ def _compute_hourly_aggregation_sync(
     # reading regardless of that reading's field validity (matches
     # guides/HARVESTING_EFFICIENCY_FORMULA.md), so it keeps using i-1.
     last_valid_weight: Optional[float] = None
+    last_valid_weight_ts: Optional[str] = None
     last_valid_energy: Optional[float] = None
     last_valid_energy_ts: Optional[str] = None
+
+    # Upper-bound counterpart to WEIGHT_NOISE_FLOOR_G above: a positive delta
+    # implying a sustained rate faster than this is more likely a balance
+    # reset/calibration bump/manual refill than real harvested water, so it's
+    # capped (not dropped — partial credit) at what this rate would plausibly
+    # accumulate over the delta's actual elapsed time. 1 L/min is a working
+    # estimate, not a validated hardware ceiling — revisit once confirmed.
+    # Scales with elapsed time for the same reason the energy threshold below
+    # does: a real multi-day-gap reconnection can accumulate a large delta
+    # without implying an implausible rate.
+    WATER_RATE_CAP_G_PER_S = 1000.0 / 60.0  # 1 L/min, water density ~1 g/mL
 
     for i in range(len(sorted_raw)):
         cur_r = sorted_raw[i]
@@ -867,18 +899,46 @@ def _compute_hourly_aggregation_sync(
             continue
         hour_key = cur_ts[:13] + ":00:00Z"
 
-        # Water: a real jump is real regardless of how long it took to
-        # accumulate, so the noise floor (unlike the energy threshold below)
-        # does not need to scale with elapsed time.
+        # Water: while the station is reporting normally (gap under
+        # WEIGHT_NOISE_RATE_APPLIES_UNDER_S), the noise floor is rate-scaled
+        # (15g/2min) on every step, however long that particular gap happens
+        # to be — a real small drip shouldn't get zeroed just for landing on
+        # a step that wasn't exactly 60s. Once the gap is stale-for-real (an
+        # actual outage), a real jump is real regardless of how long it took
+        # to accumulate — scaling the floor by elapsed time there would do
+        # the opposite of what we want, since a genuine multi-day
+        # accumulation has a tiny per-minute rate despite being unambiguously
+        # real water — so the floor reverts to the flat 15g. The upper-bound
+        # rate cap always scales with elapsed time regardless — see
+        # WATER_RATE_CAP_G_PER_S above.
         cur_w = cur_r.get("weight")
         if isinstance(cur_w, (int, float)):
-            if last_valid_weight is not None:
+            if last_valid_weight is not None and last_valid_weight_ts is not None:
                 delta_w = cur_w - last_valid_weight
-                if delta_w >= WEIGHT_NOISE_FLOOR_G:
+                elapsed_w_s = 60.0
+                if delta_w > 0:
+                    try:
+                        elapsed_w_s = max(
+                            (
+                                datetime.fromisoformat(cur_ts.replace("Z", "+00:00"))
+                                - datetime.fromisoformat(last_valid_weight_ts.replace("Z", "+00:00"))
+                            ).total_seconds(),
+                            0.0,
+                        )
+                    except Exception:
+                        elapsed_w_s = 60.0
+                    max_plausible_g = WATER_RATE_CAP_G_PER_S * elapsed_w_s
+                    delta_w = min(delta_w, max_plausible_g)
+                if elapsed_w_s < WEIGHT_NOISE_RATE_APPLIES_UNDER_S:
+                    noise_floor_g = WEIGHT_NOISE_RATE_G_PER_S * elapsed_w_s
+                else:
+                    noise_floor_g = WEIGHT_NOISE_FLOOR_G
+                if delta_w >= noise_floor_g:
                     water_delta_by_hour[hour_key] += delta_w
                 if delta_w > 0:
                     captured_g_by_hour[hour_key] += delta_w
             last_valid_weight = cur_w
+            last_valid_weight_ts = cur_ts
 
         # Energy: track elapsed time since the last VALID energy reading
         # (not the last reading, which may have had a null energy field)
@@ -933,6 +993,26 @@ def _compute_hourly_aggregation_sync(
             if abs_h > 0 and vel_mps > 0:
                 dt_s = min(elapsed_s, 120.0)
                 intake_g_by_hour[hour_key] += abs_h * vel_mps * AWH_DUCT_AREA_M2 * dt_s
+
+    # Admin-entered expected production rate (g/min) for this station, if
+    # any — used below to exclude implausibly-high hourly water totals from
+    # calculations/graphs rather than let a hardware glitch (e.g. a balance
+    # reset that reads as a huge one-step gain) inflate them. Firestore is
+    # the source of truth for this station-metadata field regardless of
+    # whether readings themselves came from Postgres or Firestore above (see
+    # the /stations endpoint, which reads it the same way). None (not set,
+    # or Firestore unavailable) means: no exclusion — leave water_produced_g
+    # exactly as computed above.
+    expected_g_per_min: Optional[float] = None
+    if db:
+        try:
+            station_doc = db.collection(settings.firestore_collection).document(station_name).get()
+            station_doc_data = station_doc.to_dict() or {}
+            raw_expected = station_doc_data.get("expected_production_g_per_min")
+            if isinstance(raw_expected, (int, float)):
+                expected_g_per_min = raw_expected
+        except Exception:
+            expected_g_per_min = None
 
     hourly_rows = []
     sorted_hours = sorted(buckets.keys())
@@ -999,6 +1079,24 @@ def _compute_hourly_aggregation_sync(
             round(water_delta_by_hour[hour_key], 4) if hour_key in water_delta_by_hour else None
         )
 
+        # If the admin has set an expected production rate for this station,
+        # cap any hour's total at 3x what that rate would produce in an hour
+        # — a real station doesn't triple its rated output, so anything past
+        # that is almost certainly a sensor glitch, not water. Only the
+        # excess above the cap is dropped (partial credit, same pattern as
+        # WATER_RATE_CAP_G_PER_S above), not the whole hour, so a station
+        # that's genuinely just running hot still gets its plausible portion
+        # counted. Capped here (before energy-per-liter/efficiency/totals
+        # below all consume it) so the same capped value flows into every
+        # downstream calculation and graph for this hour, not just the raw
+        # water chart. No expected rate set → skip this entirely, unchanged
+        # from prior behavior.
+        if expected_g_per_min is not None and row["water_produced_g"] is not None:
+            expected_g_per_hour = expected_g_per_min * 60.0
+            max_plausible_g = 3 * expected_g_per_hour
+            if row["water_produced_g"] > max_plausible_g:
+                row["water_produced_g"] = round(max_plausible_g, 4)
+
         # Energy consumed per hour: same bridging, plus the Wh-vs-kWh
         # plausibility threshold now scales with the elapsed time the
         # bridged delta actually spans (energy_span_hours_by_hour), so a
@@ -1012,7 +1110,7 @@ def _compute_hourly_aggregation_sync(
             span_hours = max(energy_span_hours_by_hour.get(hour_key, 0.0), 1.0)
             threshold_kwh = ENERGY_WH_HEURISTIC_THRESHOLD_KWH * span_hours
             energy_kwh = energy_delta / 1000.0 if energy_delta > threshold_kwh else energy_delta
-            row["energy_consumed_kWh"] = round(energy_kwh, 4)
+            row["energy_consumed_kWh"] = round(energy_kwh, 4) if energy_kwh > ENERGY_NOISE_FLOOR_KWH else None
         else:
             row["energy_consumed_kWh"] = None
 
@@ -1364,6 +1462,7 @@ async def list_stations_admin(_: None = Depends(require_admin_key)):
             status=status,
             total_readings=len(reading_docs),
             last_reading=last_reading,
+            expected_production_g_per_min=doc_data.get("expected_production_g_per_min"),
         )
 
     with ThreadPoolExecutor(max_workers=min(len(station_docs), 16) or 1) as executor:
@@ -1407,6 +1506,8 @@ async def create_station_admin(
         doc_fields["display_name"] = payload.display_name
     if payload.description is not None:
         doc_fields["description"] = payload.description
+    if payload.expected_production_g_per_min is not None:
+        doc_fields["expected_production_g_per_min"] = payload.expected_production_g_per_min
 
     stations_ref.document(station_name).set(doc_fields)
     cache.delete(get_stations_cache_key())
@@ -1420,6 +1521,7 @@ async def create_station_admin(
         location=location,
         status="pending",
         total_readings=0,
+        expected_production_g_per_min=payload.expected_production_g_per_min,
         last_reading=None,
     )
 
