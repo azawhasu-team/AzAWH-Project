@@ -245,7 +245,7 @@ export default function StationDetails() {
   );
 
   const handleBack = () => {
-    router.push('/');
+    router.push('/stations');
   };
   
   const getStatusColor = (status: string) => {
