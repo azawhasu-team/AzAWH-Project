@@ -1,3 +1,5 @@
+import { convertLiters, UNIT_LABEL, type VolumeUnit } from '@/lib/compareMath';
+
 // Field metadata shared between the station detail page (charts) and the
 // admin data-download panel — kept in one place so the two don't drift
 // (they used to duplicate this table independently).
@@ -142,4 +144,21 @@ export function splitStationDescription(description?: string | null): { text: st
   const match = description.match(STATION_ID_SUFFIX);
   if (!match) return { text: description };
   return { text: description.slice(0, match.index).trim(), rawStationId: match[1] };
+}
+
+// Fields stored in litres (or litres per minute) that follow the user's
+// chosen volume unit. Everything else keeps its fixed unit.
+const VOLUME_FIELDS = new Set(['accumulated_water_L', 'flow_total', 'flow_lmin']);
+
+export function isVolumeField(field: string): boolean {
+  return VOLUME_FIELDS.has(field);
+}
+
+export function convertFieldValue(field: string, value: number, unit: VolumeUnit): number {
+  return VOLUME_FIELDS.has(field) ? convertLiters(value, unit) : value;
+}
+
+export function fieldUnitFor(field: string, unit: VolumeUnit): string {
+  if (!VOLUME_FIELDS.has(field)) return fieldUnits[field] || '';
+  return field === 'flow_lmin' ? `${UNIT_LABEL[unit]}/min` : UNIT_LABEL[unit];
 }

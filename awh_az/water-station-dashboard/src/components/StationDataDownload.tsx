@@ -10,6 +10,8 @@ import {
   CircularProgress,
   Snackbar,
   Alert,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material';
 import { CalendarMonth, Download } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
@@ -24,7 +26,11 @@ import {
   AWH_DUCT_AREA_M2,
   computeAbsHumidity,
   velocityToMps,
+  convertFieldValue,
+  fieldUnitFor,
+  isVolumeField,
 } from '@/lib/stationFields';
+import { convertLiters, convertSpecificEnergy, UNIT_LABEL, type VolumeUnit } from '@/lib/compareMath';
 
 /**
  * Raw + hourly CSV export for one station, with its own date-range picker.
@@ -47,6 +53,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
 
   const allDownloadFields = [...availableFields.filter(f => fieldDisplayNames[f]), ...Array.from(COMPUTED_FIELDS)];
   const [rawDownloadFields, setRawDownloadFields] = useState<string[]>(allDownloadFields);
+  const [volumeUnit, setVolumeUnit] = useState<VolumeUnit>('L');
   const [rawDownloading, setRawDownloading] = useState(false);
   const [hourlyDownloading, setHourlyDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -70,6 +77,21 @@ export default function StationDataDownload({ station }: { station: StationInfo 
           onChange={(v) => setEndDate(v)}
           slotProps={{ textField: { size: 'small', sx: { width: 160 } } }}
         />
+      </Box>
+
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
+        <Typography variant="body2" color="text.secondary">Volume unit for water fields:</Typography>
+        <ToggleButtonGroup
+          exclusive
+          size="small"
+          value={volumeUnit}
+          onChange={(_, v: VolumeUnit | null) => v && setVolumeUnit(v)}
+          aria-label="Volume unit"
+        >
+          <ToggleButton value="L">L</ToggleButton>
+          <ToggleButton value="gal">gal</ToggleButton>
+          <ToggleButton value="acre-ft">ac-ft</ToggleButton>
+        </ToggleButtonGroup>
       </Box>
 
       {!rangeReady && (
@@ -244,7 +266,11 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                     timestamp: r.timestamp,
                   };
                   rawDownloadFields.forEach(f => {
-                    csvRow[fieldDisplayNames[f] || f] = r[f];
+                    const v = r[f];
+                    const converted = typeof v === 'number' ? convertFieldValue(f, v, volumeUnit) : v;
+                    const unitLabel = fieldUnitFor(f, volumeUnit);
+                    const base = fieldDisplayNames[f] || f;
+                    csvRow[isVolumeField(f) && unitLabel ? `${base} (${unitLabel})` : base] = converted;
                   });
                   return csvRow;
                 });
@@ -312,9 +338,9 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                 'Power (mean/std)',
                 'Abs Humidity Intake',
                 'Abs Humidity Outtake',
-                'Water Produced (g, L)',
+                `Water Produced (g, ${UNIT_LABEL[volumeUnit]})`,
                 'Energy Consumed (kWh)',
-                'Energy/Liter (kWh/L)',
+                `Energy/${UNIT_LABEL[volumeUnit]} (kWh/${UNIT_LABEL[volumeUnit]})`,
               ].map(label => (
                 <Chip key={label} label={label} size="small"
                   sx={{ fontSize: '0.7rem', backgroundColor: '#fce4ec', color: '#901340', fontWeight: 500 }}
@@ -362,12 +388,14 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                   'Abs Humidity Outtake Mean (g/m³)': row.abs_humidity_outtake_mean,
                   'Abs Humidity Outtake Std': row.abs_humidity_outtake_std,
                   'Water Produced (g)': row.water_produced_g,
-                  'Water Produced (L)': row.water_produced_L,
+                  [`Water Produced (${UNIT_LABEL[volumeUnit]})`]:
+                    row.water_produced_L != null ? convertLiters(row.water_produced_L, volumeUnit) : row.water_produced_L,
                   'Intake Available Water (g/hr)': row.intake_available_water_g_hourly,
                   'Captured Water (g/hr)': row.water_captured_g_hourly,
                   'Harvesting Efficiency Hourly (%)': row.harvesting_efficiency_pct_hourly,
                   'Energy Consumed (kWh)': row.energy_consumed_kWh,
-                  'Energy per Liter (kWh/L)': row.energy_per_liter_kWh_L,
+                  [`Energy per ${UNIT_LABEL[volumeUnit]} (kWh/${UNIT_LABEL[volumeUnit]})`]:
+                    row.energy_per_liter_kWh_L != null ? convertSpecificEnergy(row.energy_per_liter_kWh_L, volumeUnit) : row.energy_per_liter_kWh_L,
                 }));
                 const csv = Papa.unparse(exportData);
                 const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

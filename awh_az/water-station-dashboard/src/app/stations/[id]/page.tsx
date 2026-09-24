@@ -19,7 +19,9 @@ import {
   ListItemText,
   Checkbox,
   FormGroup,
-  FormControlLabel
+  FormControlLabel,
+  ToggleButton,
+  ToggleButtonGroup
 } from '@mui/material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
@@ -31,10 +33,12 @@ import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 import { FeatureType, ChartDataPoint, StationData } from '@/types';
 import {
   fieldDisplayNames,
-  fieldUnits,
   fieldCategories,
   splitStationDescription,
+  convertFieldValue,
+  fieldUnitFor,
 } from '@/lib/stationFields';
+import { convertLiters, convertSpecificEnergy, UNIT_LABEL, type VolumeUnit } from '@/lib/compareMath';
 import { slugify } from '@/lib/slug';
 import { useStations, useLiveReading, useLatestReadings, useStationReadingsRange, useHourly } from '@/hooks/queries';
 import { buildParameterCategories, buildChartSeries } from '@/lib/stationChartData';
@@ -72,6 +76,7 @@ export default function StationDetails() {
   // Start with no selection so buttons show "Select ..." placeholders
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
+  const [volumeUnit, setVolumeUnit] = useState<VolumeUnit>('L');
   const [selectedUnit, setSelectedUnit] = useState<string>('');
   const [selectedParameters, setSelectedParameters] = useState<string[]>([]);
 
@@ -202,8 +207,15 @@ export default function StationDetails() {
   // One independent data series per selected parameter — rendered as separate graphs
   // rather than overlaid on shared axes, so each parameter reads at its own scale.
   const chartDataByParam: { field: string; data: ChartDataPoint[] }[] = useMemo(
-    () => buildChartSeries(readings, startDate, endDate, selectedParameters),
-    [startDate, endDate, selectedParameters, readings]
+    () =>
+      buildChartSeries(readings, startDate, endDate, selectedParameters).map(({ field, data }) => ({
+        field,
+        data: data.map(p => ({
+          ...p,
+          value: typeof p.value === 'number' ? convertFieldValue(field, p.value, volumeUnit) : p.value,
+        })),
+      })),
+    [startDate, endDate, selectedParameters, readings, volumeUnit]
   );
   
   const filteredData = useMemo(() => {
@@ -321,9 +333,9 @@ export default function StationDetails() {
   // included, not filtered out) so this stays x-axis-aligned with the other
   // two hourly charts — see the matching note on hourlyEfficiencyData above.
   const hourlyEnergyPerLiterData: ChartDataPoint[] = hourlyRows
-    .map(r => ({ date: r.hour, value: typeof r.energy_per_liter_kWh_L === 'number' ? r.energy_per_liter_kWh_L : null }));
+    .map(r => ({ date: r.hour, value: typeof r.energy_per_liter_kWh_L === 'number' ? convertSpecificEnergy(r.energy_per_liter_kWh_L, volumeUnit) : null }));
   const hourlyWaterProductionData: ChartDataPoint[] = hourlyRows
-    .map(r => ({ date: r.hour, value: typeof r.water_produced_L === 'number' ? r.water_produced_L : null }));
+    .map(r => ({ date: r.hour, value: typeof r.water_produced_L === 'number' ? convertLiters(r.water_produced_L, volumeUnit) : null }));
   
   return (
     <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 4, maxWidth: '1600px', mx: 'auto' }}>
@@ -525,6 +537,19 @@ export default function StationDetails() {
             </Box>
           </Box>
 
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={volumeUnit}
+            onChange={(_, v: VolumeUnit | null) => v && setVolumeUnit(v)}
+            aria-label="Volume unit"
+            sx={{ mb: 2 }}
+          >
+            <ToggleButton value="L">L</ToggleButton>
+            <ToggleButton value="gal">gal</ToggleButton>
+            <ToggleButton value="acre-ft">ac-ft</ToggleButton>
+          </ToggleButtonGroup>
+
           {startDate && endDate && (
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
               Humidity and power are instant readings; water production is the most recent hour&apos;s rate; total water produced and energy consumption are totals for {dateRangeString}.
@@ -540,13 +565,13 @@ export default function StationDetails() {
           {liveReading && (
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(auto-fit, minmax(140px, 1fr))' }, gap: 2 }}>
               {[
-                { key: 'water_total', label: 'Total Water Produced', value: hourlyRows.length > 0 ? periodTotalWaterL : null, unit: 'L', decimals: 2, requires: ['weight'], subLabel: null as string | null },
+                { key: 'water_total', label: 'Total Water Produced', value: hourlyRows.length > 0 ? convertLiters(periodTotalWaterL, volumeUnit) : null, unit: UNIT_LABEL[volumeUnit], decimals: volumeUnit === 'acre-ft' ? 6 : 2, requires: ['weight'], subLabel: null as string | null },
                 {
                   key: 'water_per_hour',
                   label: 'Water Production',
-                  value: latestWaterProducedL,
-                  unit: 'L/h',
-                  decimals: 2,
+                  value: latestWaterProducedL != null ? convertLiters(latestWaterProducedL, volumeUnit) : null,
+                  unit: `${UNIT_LABEL[volumeUnit]}/h`,
+                  decimals: volumeUnit === 'acre-ft' ? 6 : 2,
                   requires: ['weight'],
                   subLabel: latestWaterProducedIsStale && latestWaterProducedHour
                     ? `as of ${formatPhoenixMonthDayTime(new Date(latestWaterProducedHour))}`
@@ -554,7 +579,7 @@ export default function StationDetails() {
                 },
                 { key: 'humidity', label: 'Intake Humidity', value: liveReading.humidity, unit: '%', decimals: 1, requires: ['humidity'], subLabel: null as string | null },
                 { key: 'outtake_humidity', label: 'Outtake Humidity', value: liveReading.outtake_humidity, unit: '%', decimals: 1, requires: ['outtake_humidity'], subLabel: null as string | null },
-                { key: 'energy_per_liter', label: 'Energy Consumption', value: periodEnergyPerLiter, unit: 'kWh/L', decimals: 3, requires: ['energy', 'weight'], subLabel: null as string | null },
+                { key: 'energy_per_liter', label: 'Energy Consumption', value: periodEnergyPerLiter != null ? convertSpecificEnergy(periodEnergyPerLiter, volumeUnit) : null, unit: `kWh/${UNIT_LABEL[volumeUnit]}`, decimals: volumeUnit === 'acre-ft' ? 0 : 3, requires: ['energy', 'weight'], subLabel: null as string | null },
                 { key: 'power', label: 'Power', value: liveReading.power, unit: 'W', decimals: 1, requires: ['power'], subLabel: null as string | null },
               ]
                 .filter(f => f.requires.every(r => availableFields.includes(r)) && typeof f.value === 'number')
@@ -803,7 +828,7 @@ export default function StationDetails() {
             startDate={format(startDate, 'yyyy-MM-dd')}
             endDate={format(endDate, 'yyyy-MM-dd')}
             paramNames={[fieldDisplayNames[field] || field]}
-            paramUnits={[fieldUnits[field] || '']}
+            paramUnits={[fieldUnitFor(field, volumeUnit)]}
           />
         </motion.div>
       ))}
@@ -834,7 +859,7 @@ export default function StationDetails() {
               startDate={format(startDate, 'yyyy-MM-dd')}
               endDate={format(endDate, 'yyyy-MM-dd')}
               paramNames={['Water Production Rate (Hourly)']}
-              paramUnits={['L/h']}
+              paramUnits={[`${UNIT_LABEL[volumeUnit]}/h`]}
               chartType="bar"
             />
           )}
@@ -853,7 +878,7 @@ export default function StationDetails() {
             startDate={format(startDate, 'yyyy-MM-dd')}
             endDate={format(endDate, 'yyyy-MM-dd')}
             paramNames={['Specific Energy Consumption (Hourly)']}
-            paramUnits={['kWh/L']}
+            paramUnits={[`kWh/${UNIT_LABEL[volumeUnit]}`]}
             chartType="bar"
           />
         </motion.div>
