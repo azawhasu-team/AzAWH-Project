@@ -11,12 +11,16 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  ReferenceArea,
   ResponsiveContainer,
 } from 'recharts';
-import { Box, Typography, Paper } from '@mui/material';
+import { Box, Typography, Paper, Button } from '@mui/material';
+import { ZoomOutMap } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import { FeatureType, ChartDataPoint } from '@/types';
 import { formatPhoenixTime, formatPhoenixFullDateTime, phoenixDateKey } from '@/lib/timezone';
+import { downsampleMinMax } from '@/lib/downsample';
 
 interface FeaturePlotProps {
   data: ChartDataPoint[];
@@ -35,6 +39,8 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
   const isBar = chartType === 'bar';
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
+  // On phones the axes' width and rotated titles eat a third of the plot.
+  const isPhone = useMediaQuery(theme.breakpoints.down('sm'));
   // recharts exports AreaChart/BarChart as distinct components, but both
   // accept the same axis/grid/tooltip/legend children — swapping just the
   // container (and the Area/Bar series below) is enough to switch chart types.
@@ -50,13 +56,41 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
   const unit1 = paramUnits?.[0] || '';
   const unit2 = paramUnits?.[1] || '';
 
-  // Downsample data if too many points for clean rendering
-  const plotData = React.useMemo(() => {
-    const MAX_POINTS = 500;
-    if (data.length <= MAX_POINTS) return data;
-    const step = Math.ceil(data.length / MAX_POINTS);
-    return data.filter((_, i) => i % step === 0 || i === data.length - 1);
-  }, [data]);
+  // Drag-to-zoom (continuous charts only). Zooming re-downsamples from the
+  // full series, so a zoomed-in view shows real detail rather than a
+  // magnified copy of the coarse overview. The zoom is tied to the `data`
+  // array it was made on, so applying a new date range resets it.
+  const [zoomState, setZoomState] = React.useState<{ data: ChartDataPoint[]; start: number; end: number } | null>(null);
+  const [dragLeft, setDragLeft] = React.useState<string | null>(null);
+  const [dragRight, setDragRight] = React.useState<string | null>(null);
+  const zoom = zoomState && zoomState.data === data ? zoomState : null;
+  const canZoom = !isBar;
+
+  const visibleData = React.useMemo(
+    () =>
+      zoom
+        ? data.filter(d => {
+            const t = new Date(d.date).getTime();
+            return t >= zoom.start && t <= zoom.end;
+          })
+        : data,
+    [data, zoom]
+  );
+
+  const MAX_POINTS = 500;
+  // Peak-preserving downsample (see lib/downsample.ts) — plain every-Nth-point
+  // sampling can drop an isolated spike, which is what this chart must show.
+  const plotData = React.useMemo(() => downsampleMinMax(visibleData, MAX_POINTS), [visibleData]);
+
+  const commitDrag = () => {
+    if (dragLeft && dragRight && dragLeft !== dragRight) {
+      const a = new Date(dragLeft).getTime();
+      const b = new Date(dragRight).getTime();
+      setZoomState({ data, start: Math.min(a, b), end: Math.max(a, b) });
+    }
+    setDragLeft(null);
+    setDragRight(null);
+  };
 
   // Determine if data spans multiple days (in Phoenix time) to choose date vs time formatting
   const spansMultipleDays = React.useMemo(() => {
@@ -69,8 +103,9 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
   // Compute tick interval: aim for ~10-15 ticks on x-axis
   const tickInterval = React.useMemo(() => {
     if (plotData.length <= 15) return 0;
-    return Math.floor(plotData.length / 12);
-  }, [plotData]);
+    // ~12 rotated labels fit a desktop chart; on a phone they overlap into a smear.
+    return Math.floor(plotData.length / (isPhone ? 4 : 12));
+  }, [plotData, isPhone]);
   const getFeatureUnit = (feature: FeatureType): string => {
     switch (feature) {
       case 'Temperature':
@@ -159,8 +194,23 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
           </Typography>
           <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 500 }}>
             {startDate} → {endDate} &nbsp;·&nbsp; {data.length.toLocaleString()} readings
+            {plotData.length < visibleData.length &&
+              ` · showing ${plotData.length.toLocaleString()} points, peaks preserved`}
           </Typography>
         </Box>
+        {canZoom && (
+          zoom ? (
+            <Button size="small" startIcon={<ZoomOutMap />} onClick={() => setZoomState(null)}>
+              Reset zoom ({visibleData.length.toLocaleString()} readings)
+            </Button>
+          ) : (
+            data.length > 20 && (
+              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                Drag across the chart to zoom
+              </Typography>
+            )
+          )
+        )}
       </Box>
 
       {data.length === 0 ? (
@@ -179,7 +229,11 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
           <ResponsiveContainer width="100%" height="100%">
             <ChartContainer
               data={plotData}
-              margin={{ top: 10, right: hasSecondParam ? 70 : 20, left: 10, bottom: 60 }}
+              margin={{ top: 10, right: hasSecondParam ? (isPhone ? 10 : 70) : 20, left: isPhone ? 0 : 10, bottom: 60 }}
+              onMouseDown={canZoom ? (e) => e?.activeLabel != null && setDragLeft(String(e.activeLabel)) : undefined}
+              onMouseMove={canZoom && dragLeft ? (e) => e?.activeLabel != null && setDragRight(String(e.activeLabel)) : undefined}
+              onMouseUp={canZoom ? commitDrag : undefined}
+              onMouseLeave={canZoom ? () => { setDragLeft(null); setDragRight(null); } : undefined}
             >
               <defs>
                 <linearGradient id="grad1" x1="0" y1="0" x2="0" y2="1">
@@ -208,14 +262,14 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
                 yAxisId="left"
                 stroke={chartAxisStroke}
                 tickFormatter={(v: number) => unit1 ? `${typeof v === 'number' ? Number(v).toFixed(1) : v} ${unit1}` : String(v)}
-                label={{
+                label={isPhone ? undefined : {
                   value: unit1 || param1Name,
                   angle: -90,
                   position: 'insideLeft',
                   offset: -5,
                   style: { fill: '#1e88e5', fontSize: '12px', fontWeight: 600 }
                 }}
-                width={unit1 ? 75 : 60}
+                width={isPhone ? 52 : unit1 ? 75 : 60}
                 tick={{ fontSize: 11, fill: chartTickColor }}
                 axisLine={false}
                 tickLine={false}
@@ -226,14 +280,14 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
                   orientation="right"
                   stroke={chartAxisStroke}
                   tickFormatter={(v: number) => unit2 ? `${typeof v === 'number' ? Number(v).toFixed(1) : v} ${unit2}` : String(v)}
-                  label={{
+                  label={isPhone ? undefined : {
                     value: unit2 || param2Name,
                     angle: 90,
                     position: 'insideRight',
                     offset: 5,
                     style: { fill: '#e91e63', fontSize: '12px', fontWeight: 600 }
                   }}
-                  width={unit2 ? 75 : 60}
+                  width={isPhone ? 52 : unit2 ? 75 : 60}
                   tick={{ fontSize: 11, fill: chartTickColor }}
                   axisLine={false}
                   tickLine={false}
@@ -306,6 +360,9 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
                     name={param2Name}
                   />
                 )
+              )}
+              {canZoom && dragLeft && dragRight && (
+                <ReferenceArea yAxisId="left" x1={dragLeft} x2={dragRight} strokeOpacity={0.3} fill="#1e88e5" fillOpacity={0.12} />
               )}
             </ChartContainer>
           </ResponsiveContainer>

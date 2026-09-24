@@ -1,3 +1,17 @@
 html {
   color-scheme: light dark;
 }
+
+/* Recharts 3 makes each chart keyboard-focusable (arrow keys move the
+   tooltip). Keep that, but don't draw the browser's heavy focus box on mouse
+   clicks; keyboard users still get a visible, on-brand ring. */
+.recharts-wrapper:focus,
+.recharts-surface:focus {
+  outline: none;
+}
+.recharts-wrapper:focus-visible,
+.recharts-surface:focus-visible {
+  outline: 2px solid #901340;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
