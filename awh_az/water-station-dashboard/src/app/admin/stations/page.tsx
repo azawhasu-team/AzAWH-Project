@@ -274,7 +274,7 @@ export default function AdminStationsPage() {
   if (loading) {
     return (
       <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 6, maxWidth: '900px', mx: 'auto' }}>
-        <Skeleton variant="text" width={280} height={48} sx={{ mb: 3 }} />
+        <Skeleton variant="text" width={280} height={48} sx={{ maxWidth: '100%', mb: 3 }} />
         {Array.from({ length: 3 }).map((_, i) => (
           <Skeleton key={i} variant="rounded" height={220} sx={{ mb: 3 }} />
         ))}
@@ -488,7 +488,7 @@ export default function AdminStationsPage() {
         <DialogTitle>Add Station</DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ mb: 2 }}>
-            Registers a new station in Firestore. It'll appear here right away with status
+            Registers a new station in Firestore. It&apos;ll appear here right away with status
             &quot;Pending&quot; and go &quot;Online&quot; automatically once its Raspberry Pi starts
             uploading real readings.
           </DialogContentText>

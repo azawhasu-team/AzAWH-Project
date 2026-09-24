@@ -75,7 +75,7 @@ export default function Footer() {
                 fontStyle: 'italic',
               }}
             >
-              Harvesting Tomorrow's Water, Today
+              Harvesting Tomorrow&apos;s Water, Today
             </Typography>
           </Box>
 

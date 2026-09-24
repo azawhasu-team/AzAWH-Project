@@ -1,36 +1,88 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AzAWH Dashboard
 
-## Getting Started
+Monitoring dashboard for the Arizona Atmospheric Water Harvesting (AWH) stations
+at Arizona State University (SSEBE). It visualizes live and historical data from
+9 deployed stations: about 1.58M sensor readings across 14 environmental
+parameters, served by the FastAPI backend in [`../backend`](../backend).
 
-First, run the development server:
+**Live:** https://azawhdashboard.vercel.app (login required)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## What it does
+
+- **Station overview** — every station with status and freshness of its last reading
+- **Station detail** — live reading (polled every 30s), per-parameter time-series
+  charts, hourly water production, specific energy and harvesting efficiency,
+  CSV export for any date range
+- **Compare** — stations side by side, or one station across months, with
+  selectable metric, unit (L / gal) and alignment mode
+- **Admin** — station registry management behind a second passphrase gate
+
+## Stack
+
+Next.js 16 (App Router) · React 19 · TypeScript · MUI + Tailwind CSS ·
+Recharts · TanStack Query · Vitest
+
+## Architecture
+
+```
+Raspberry Pi stations → Firestore → ingestion worker → PostgreSQL
+                                                           │
+                              FastAPI (Render) ◄───────────┘
+                                   │  REST
+                                   ▼
+                        this dashboard (Vercel)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Code layout:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+src/
+  app/            routes (overview, stations/[id], compare, admin, api/*)
+  components/     shared UI (Header, StationCard, FeaturePlot, exports…)
+  lib/            api client, auth, and pure data logic
+    stationChartData.ts   chart series + derived metrics (unit tested)
+    stationFields.ts      field metadata, unit conversion, physical constants
+  middleware.ts   session gate for every route
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Data-shaping logic (cumulative water, incremental energy, harvesting
+efficiency) lives in pure functions under `src/lib`, separate from React, so it
+is covered by unit tests. The tests encode real sensor quirks: noise-floor
+filtering on the balance, and dropping corrupt energy-register values instead
+of plotting them.
 
-## Learn More
+## Getting started
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm install
+cp .env.local.example .env.local   # then fill in values
+npm run dev                  # http://localhost:3000
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Environment variables
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Variable | Purpose |
+|---|---|
+| `NEXT_PUBLIC_API_URL` | Base URL of the FastAPI backend (defaults to `http://localhost:8000`) |
+| `DASHBOARD_USER`, `DASHBOARD_PASSWORD` | Site login |
+| `SESSION_SECRET` | Signs the site session cookie |
+| `ADMIN_PASSPHRASE`, `ADMIN_SESSION_SECRET` | Admin area gate |
+| `ADMIN_API_KEY` | Server-side key for admin API routes |
 
-## Deploy on Vercel
+## Scripts
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Command | What it does |
+|---|---|
+| `npm run dev` | Development server |
+| `npm run build` | Production build |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | TypeScript, no emit |
+| `npm test` | Vitest unit tests |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+CI runs lint, typecheck, tests and build on every push and pull request
+(see [`.github/workflows/dashboard-ci.yml`](../../.github/workflows/dashboard-ci.yml)).
+
+## Deployment
+
+Vercel deploys from `main` of `azawhasu-team/AzAWH-Project`, path
+`awh_az/water-station-dashboard`.

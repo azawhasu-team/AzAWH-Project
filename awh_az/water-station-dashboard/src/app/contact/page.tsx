@@ -40,7 +40,7 @@ export default function ContactPage() {
             Get in Touch
           </Typography>
           <Typography variant="body1" color="text.secondary" paragraph sx={{ lineHeight: 1.8 }}>
-            Have questions about the AWH Atmospheric Water Harvesting System? We're here to help!
+            Have questions about the AWH Atmospheric Water Harvesting System? We&apos;re here to help!
           </Typography>
 
           <Box sx={{ mt: 4 }}>
