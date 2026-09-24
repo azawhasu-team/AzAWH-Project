@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useMemo } from 'react';
 import { Typography, Box, Fade, Skeleton, Alert } from '@mui/material';
 import StationCard from '@/components/StationCard';
-import { apiClient, type StationInfo } from '@/lib/api-client';
+import { useStations } from '@/hooks/queries';
 import { filterVisibleStations } from '@/lib/hiddenStations';
 
 // Fixed-max card width + auto-fit + centered justification, instead of a
@@ -19,26 +19,13 @@ const stationGridSx = {
 } as const;
 
 export default function StationsPage() {
-  const [stations, setStations] = useState<StationInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    async function fetchStations() {
-      try {
-        setLoading(true);
-        const data = await apiClient.getStations();
-        setStations(filterVisibleStations(data));
-        setError(null);
-      } catch (err) {
-        console.error('Failed to fetch stations:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load stations');
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchStations();
-  }, []);
+  const stationsQuery = useStations();
+  const stations = useMemo(
+    () => filterVisibleStations(stationsQuery.data ?? []),
+    [stationsQuery.data]
+  );
+  const loading = stationsQuery.isLoading;
+  const error = stationsQuery.error ? stationsQuery.error.message : null;
 
   // Online stations are listed before offline ones (a stable partition —
   // order within each group is otherwise untouched) so the stations someone
@@ -52,6 +39,7 @@ export default function StationsPage() {
       units: [station.unit],
       image: station.image_url || undefined,
       description: station.description || undefined,
+      lastReading: station.metadata.last_reading,
     }))
     .sort((a, b) => (a.status === b.status ? 0 : a.status === 'Online' ? -1 : 1));
   const onlineStationCards = stationCards.filter((s) => s.status === 'Online');
@@ -60,8 +48,8 @@ export default function StationsPage() {
   if (loading) {
     return (
       <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 6, maxWidth: '1400px', mx: 'auto' }}>
-        <Skeleton variant="text" width={260} height={48} sx={{ mx: 'auto', mb: 1 }} />
-        <Skeleton variant="text" width={420} height={28} sx={{ mx: 'auto', mb: 5 }} />
+        <Skeleton variant="text" width={260} height={48} sx={{ maxWidth: '100%', mx: 'auto', mb: 1 }} />
+        <Skeleton variant="text" width={420} height={28} sx={{ maxWidth: '100%', mx: 'auto', mb: 5 }} />
         <Box
           sx={{
             display: 'grid',

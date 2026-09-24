@@ -15,6 +15,7 @@ import { Circle as CircleIcon, Info as InfoIcon, LocationOn as LocationOnIcon } 
 import { useRouter } from 'next/navigation';
 import { Station } from '@/types';
 import { slugify } from '@/lib/slug';
+import { freshnessOf, formatAge } from '@/lib/freshness';
 
 interface StationCardProps {
   station: Station;
@@ -29,6 +30,11 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
   const handleViewDetails = () => {
     router.push(`/stations/${encodeURIComponent(slugify(station.name))}`);
   };
+
+  // Lazy initial value keeps render pure; the age is only as fresh as the
+  // last list fetch, which is fine for a coarse Live / Delayed / Not sending label.
+  const [nowMs] = React.useState(() => Date.now());
+  const fresh = freshnessOf(station.lastReading, nowMs);
 
   const getStatusColor = (status: string) => {
     return status === 'Online' ? 'success' : 'error';
@@ -111,6 +117,15 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
         >
           <LocationOnIcon sx={{ fontSize: 14 }} />
           {station.location || 'Location Unknown'}
+        </Typography>
+
+        <Typography
+          variant="caption"
+          sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1, fontWeight: 600, color: 'text.secondary' }}
+        >
+          <CircleIcon sx={{ fontSize: 9, color: fresh.color }} aria-hidden />
+          <span style={{ color: fresh.color }}>{fresh.label}</span>
+          {fresh.ageSec != null && <span>· last reading {formatAge(fresh.ageSec)}</span>}
         </Typography>
 
 

@@ -7,6 +7,7 @@ export interface Station {
   description?: string;
   units?: string[];  // Array of unit names for this station
   hidden?: boolean;
+  lastReading?: string | null;  // ISO timestamp of the newest reading, for the freshness label
 }
 
 export interface StationData {

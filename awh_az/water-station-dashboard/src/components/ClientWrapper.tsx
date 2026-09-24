@@ -9,6 +9,8 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import Header from './Header';
 import Footer from './Footer';
+import QueryProvider from './QueryProvider';
+import ServerWakingBanner from './ServerWakingBanner';
 import { ColorMode, ColorModeContext, COLOR_MODE_STORAGE_KEY } from '@/lib/colorMode';
 
 const ASU_MAROON = '#901340';
@@ -192,6 +194,7 @@ const ClientWrapper: React.FC<ClientWrapperProps> = ({ children }) => {
     <ColorModeContext.Provider value={colorMode}>
       <ThemeProvider theme={theme}>
         <LocalizationProvider dateAdapter={AdapterDateFns}>
+          <QueryProvider>
           <CssBaseline enableColorScheme />
           {isLoginPage ? (
             children
@@ -205,12 +208,14 @@ const ClientWrapper: React.FC<ClientWrapperProps> = ({ children }) => {
               }}
             >
               <Header />
+              <ServerWakingBanner />
               <Box sx={{ flex: 1 }}>
                 {children}
               </Box>
               <Footer />
             </Box>
           )}
+          </QueryProvider>
         </LocalizationProvider>
       </ThemeProvider>
     </ColorModeContext.Provider>

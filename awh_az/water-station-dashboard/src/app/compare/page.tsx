@@ -50,9 +50,23 @@ import {
 } from 'recharts';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { format } from 'date-fns';
-import { apiClient, type StationInfo, type HourlyDataRow } from '@/lib/api-client';
+import type { StationInfo } from '@/lib/api-client';
+import { useStations, useHourlyMany, type HourlyRequest } from '@/hooks/queries';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 import { filterVisibleStations } from '@/lib/hiddenStations';
+import { freshnessOf, formatAge } from '@/lib/freshness';
+import {
+  type Measurement,
+  type VolumeUnit,
+  type ChartPoint,
+  UNIT_LABEL,
+  formatMeasurementValue,
+  summarizeWindow,
+  buildComparisonPoint,
+  monthKeyOf,
+  formatMonthLabel,
+  monthRangeISO,
+} from '@/lib/compareMath';
 
 /**
  * A compact bar showing this station's value relative to the highest value
@@ -98,71 +112,15 @@ interface StationComparison {
 }
 
 const WINDOW_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Same thresholds/labels/colors as the station detail page's Live Status
-// widget — one freshness vocabulary across the app, not a second one
-// invented for this page.
-function freshnessOf(lastReading: string | null | undefined) {
-  if (!lastReading) return { label: 'Waiting for data', color: '#9e9e9e' };
-  const ageSec = Math.max(0, (Date.now() - new Date(lastReading).getTime()) / 1000);
-  if (ageSec < 120) return { label: 'Live', color: '#2e7d32', ageSec };
-  if (ageSec < 600) return { label: 'Delayed', color: '#ed6c02', ageSec };
-  return { label: 'Not sending', color: '#c62828', ageSec };
-}
-
-function formatAge(ageSec: number | undefined): string {
-  if (ageSec == null) return '';
-  if (ageSec < 60) return `${Math.floor(ageSec)}s ago`;
-  if (ageSec < 3600) return `${Math.floor(ageSec / 60)}m ago`;
-  if (ageSec < 86400) return `${Math.floor(ageSec / 3600)}h ago`;
-  return `${Math.floor(ageSec / 86400)}d ago`;
-}
-
-// Total is a ratio of window sums, not an average of hourly percentages —
-// same principle as the backend's hourly efficiency formula (a mean-of-ratios
-// would let a handful of noisy near-zero-intake hours skew the result;
-// summing captured/available first and dividing once doesn't). Efficiency
-// and specific energy consumption below are "last data point" snapshots
-// instead, since the backend already computes both per-hour — no need to
-// re-derive a window ratio for them here. Specific energy consumption
-// (kWh per unit volume of water produced — kWh/L, kWh/gal, kWh/ac-ft) is the
-// standard way this quantity is expressed; the underlying value stored here
-// is always kWh/L, converted to the display unit only when rendered.
-function summarizeWindow(rows: HourlyDataRow[]) {
-  let waterL = 0;
-  let hasWater = false;
-  for (const row of rows) {
-    if (row.water_produced_L != null) {
-      waterL += row.water_produced_L;
-      hasWater = true;
-    }
-  }
-
-  // Rows arrive chronologically ascending; scan from the end so each metric
-  // takes its own most-recent non-null hour independently (one sensor being
-  // out shouldn't blank out the other's latest reading).
-  let lastEfficiencyPct: number | null = null;
-  let lastSpecificEnergyKWhPerL: number | null = null;
-  for (let i = rows.length - 1; i >= 0 && (lastEfficiencyPct == null || lastSpecificEnergyKWhPerL == null); i--) {
-    if (lastEfficiencyPct == null && rows[i].harvesting_efficiency_pct_hourly != null) {
-      lastEfficiencyPct = rows[i].harvesting_efficiency_pct_hourly as number;
-    }
-    if (lastSpecificEnergyKWhPerL == null && rows[i].energy_per_liter_kWh_L != null) {
-      lastSpecificEnergyKWhPerL = rows[i].energy_per_liter_kWh_L;
-    }
-  }
-
-  return {
-    waterProducedL: hasWater ? waterL : null,
-    lastEfficiencyPct,
-    lastSpecificEnergyKWhPerL,
-  };
+// ISO string of a timestamp rounded down to the hour (hourly data has no finer resolution).
+function hourFloorISO(ms: number): string {
+  return new Date(Math.floor(ms / 3_600_000) * 3_600_000).toISOString();
 }
 
 // --- Top panel: configurable bar chart -------------------------------------
 
-type Measurement = 'total' | 'production' | 'energy' | 'efficiency';
-type VolumeUnit = 'L' | 'gal' | 'acre-ft';
 type RangePreset = '7d' | '30d' | '90d' | 'all' | 'custom';
 // 'same-time' plots every station over the identical calendar window —
 // the more rigorous comparison, since it holds external conditions (season,
@@ -226,49 +184,6 @@ const HUMIDITY_COLOR = '#00acc1';
 
 function formatHumidity(value: number): string {
   return `${value.toFixed(1)} g/m³`;
-}
-
-const LITERS_PER_GALLON = 3.785411784;
-const LITERS_PER_ACRE_FOOT = 1233481.85;
-const UNIT_LABEL: Record<VolumeUnit, string> = { L: 'L', gal: 'gal', 'acre-ft': 'ac-ft' };
-
-function convertLiters(valueL: number, unit: VolumeUnit): number {
-  if (unit === 'gal') return valueL / LITERS_PER_GALLON;
-  if (unit === 'acre-ft') return valueL / LITERS_PER_ACRE_FOOT;
-  return valueL;
-}
-
-// Specific energy consumption is energy PER unit volume, so converting the
-// display unit multiplies rather than divides — going from kWh/L to kWh/gal
-// means each (larger) gallon costs more kWh, not fewer. The exact inverse
-// operation of convertLiters above.
-function convertSpecificEnergy(kWhPerLiter: number, unit: VolumeUnit): number {
-  if (unit === 'gal') return kWhPerLiter * LITERS_PER_GALLON;
-  if (unit === 'acre-ft') return kWhPerLiter * LITERS_PER_ACRE_FOOT;
-  return kWhPerLiter;
-}
-
-function formatMeasurementValue(value: number, measurement: Measurement, unit: VolumeUnit): string {
-  if (measurement === 'efficiency') return `${value.toFixed(1)}%`;
-  if (measurement === 'energy') {
-    // kWh/L and kWh/gal are small fractions; kWh/ac-ft is enormous (an
-    // acre-foot is ~1.2 million liters) — scale precision to the unit so
-    // neither rounds to 0.00 nor prints a wall of decimals.
-    const maximumFractionDigits = unit === 'acre-ft' ? 0 : 3;
-    return `${value.toLocaleString(undefined, { maximumFractionDigits })} kWh/${UNIT_LABEL[unit]}`;
-  }
-  const maximumFractionDigits = unit === 'acre-ft' ? 6 : 2;
-  return `${value.toLocaleString(undefined, { maximumFractionDigits })} ${UNIT_LABEL[unit]}`;
-}
-
-interface ChartPoint {
-  stationName: string;
-  displayName: string;
-  mean: number | null;
-  std: number | null;
-  latest: number | null;
-  absHumidity: number | null;
-  hasData: boolean;
 }
 
 interface ChartTooltipProps {
@@ -394,121 +309,6 @@ function StatTile({
 }
 
 // Estimate, not a confirmed team decision yet — revisit once settled.
-const DOWNTIME_MIN_HOURS = 2;
-
-// Drops hours that fall inside a run of >= DOWNTIME_MIN_HOURS consecutive
-// zero-production hours, so a station's (or a month's) normal idle/powered-
-// down stretches don't pull its "production" mean down the way a plain
-// average would. This changes what the mean answers: "average output per
-// hour including downtime" (unfiltered) vs. "average output per hour while
-// actively running" (filtered) — only applied to the `production`
-// measurement, since `total` is a sum where a zero hour already contributes
-// correctly. Cannot yet distinguish a real idle period (pump off, unit
-// powered down) from a dead/frozen sensor reporting a flat zero — both look
-// identical as "0 L this hour" from the aggregated data available here.
-function excludeDowntime(rows: HourlyDataRow[]): HourlyDataRow[] {
-  const kept: HourlyDataRow[] = [];
-  let i = 0;
-  while (i < rows.length) {
-    if (rows[i].water_produced_L === 0) {
-      let j = i;
-      while (j < rows.length && rows[j].water_produced_L === 0) j++;
-      if (j - i < DOWNTIME_MIN_HOURS) kept.push(...rows.slice(i, j));
-      i = j;
-    } else {
-      kept.push(rows[i]);
-      i++;
-    }
-  }
-  return kept;
-}
-
-// Builds one bar's worth of chart data (mean/std/latest/absHumidity) from a
-// set of hourly rows — shared between "compare stations" (one point per
-// station, same window) and "compare months" (one point per month, same
-// station) since the underlying math is identical either way: only what the
-// rows represent differs. Total = sum of hourly values across the range (a
-// running total). The other three measurements plot the mean of the hourly
-// values +/- one standard deviation, to show how much the rate actually
-// varies — a sum has no "variation" to show, so it gets no error bar.
-function buildComparisonPoint(
-  key: string,
-  displayName: string,
-  rows: HourlyDataRow[],
-  measurement: Measurement,
-  unit: VolumeUnit
-): ChartPoint {
-  const fieldKey: 'water_produced_L' | 'energy_per_liter_kWh_L' | 'harvesting_efficiency_pct_hourly' =
-    measurement === 'energy'
-      ? 'energy_per_liter_kWh_L'
-      : measurement === 'efficiency'
-      ? 'harvesting_efficiency_pct_hourly'
-      : 'water_produced_L';
-
-  const effectiveRows = measurement === 'production' ? excludeDowntime(rows) : rows;
-  const values = effectiveRows.map((r) => r[fieldKey]).filter((v): v is number => v != null);
-
-  // Mean absolute humidity at intake across the same hours — the ambient
-  // condition backing whatever measurement is plotted.
-  const ahValues = rows.map((r) => r.abs_humidity_intake_mean).filter((v): v is number => v != null);
-  const absHumidity = ahValues.length > 0 ? ahValues.reduce((a, b) => a + b, 0) / ahValues.length : null;
-
-  if (values.length === 0) {
-    return { stationName: key, displayName, mean: null, std: null, latest: null, absHumidity, hasData: false };
-  }
-
-  const isVolume = measurement === 'total' || measurement === 'production';
-  const convert = (v: number) =>
-    isVolume ? convertLiters(v, unit) : measurement === 'energy' ? convertSpecificEnergy(v, unit) : v;
-
-  if (measurement === 'total') {
-    // A sum-over-the-period has no "latest single hour" worth comparing it
-    // against — that comparison only makes sense for a rate/ratio.
-    const sum = values.reduce((a, b) => a + b, 0);
-    return { stationName: key, displayName, mean: convert(sum), std: null, latest: null, absHumidity, hasData: true };
-  }
-
-  const rawMean = values.reduce((a, b) => a + b, 0) / values.length;
-  const variance =
-    values.length > 1 ? values.reduce((acc, v) => acc + (v - rawMean) ** 2, 0) / (values.length - 1) : 0;
-  const rawStd = Math.sqrt(variance);
-  // rows (and therefore values, mapped/filtered in the same order) arrive
-  // chronologically ascending, so the last element is the most recent
-  // non-null hour — the "right now" reading, vs. the bar's period mean.
-  const rawLatest = values[values.length - 1];
-
-  return {
-    stationName: key,
-    displayName,
-    mean: convert(rawMean),
-    std: convert(rawStd),
-    latest: convert(rawLatest),
-    absHumidity,
-    hasData: true,
-  };
-}
-
-// A selected month is stored as its "yyyy-MM" key (sorts/dedupes as a plain
-// string, and round-trips through the DatePicker's Date value cleanly).
-function monthKeyOf(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function formatMonthLabel(key: string): string {
-  const [y, m] = key.split('-').map(Number);
-  return format(new Date(y, m - 1, 1), 'MMM yyyy');
-}
-
-// Calendar-month boundaries in UTC, passed straight through as the /hourly
-// start_date/end_date filter — same ISO-string contract the rest of this
-// page already uses for date-range fetches.
-function monthRangeISO(key: string): { start: string; end: string } {
-  const [y, m] = key.split('-').map(Number);
-  const start = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0));
-  const end = new Date(Date.UTC(y, m, 0, 23, 59, 59, 999)); // day 0 of next month = last day of this one
-  return { start: start.toISOString(), end: end.toISOString() };
-}
-
 type CompareMode = 'stations' | 'months';
 
 export default function ComparePage() {
@@ -523,10 +323,13 @@ export default function ComparePage() {
   const chartTickColorMuted = '#888';
   const chartMarkerColor = isDark ? '#f0f0f0' : '#1a1a1a';
   const chartLegendColor = isDark ? theme.palette.text.secondary : '#484848';
-  const [stations, setStations] = useState<StationInfo[]>([]);
-  const [tableRows, setTableRows] = useState<StationComparison[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // "Now" for this page visit, fixed so every preset window and query key is stable.
+  const [nowMs] = useState(() => Date.now());
+  const stationsQuery = useStations();
+  const stations = useMemo(
+    () => filterVisibleStations(stationsQuery.data ?? []),
+    [stationsQuery.data]
+  );
 
   // Top panel controls
   const [rangePreset, setRangePreset] = useState<RangePreset>('7d');
@@ -536,30 +339,15 @@ export default function ComparePage() {
   const [measurement, setMeasurement] = useState<Measurement>('total');
   const [unit, setUnit] = useState<VolumeUnit>('L');
 
-  const [chartHourly, setChartHourly] = useState<Record<string, HourlyDataRow[]>>({});
-  const [chartLoading, setChartLoading] = useState(true);
-  const [chartError, setChartError] = useState<string | null>(null);
-  const [slowLoad, setSlowLoad] = useState(false);
-
   // "Compare months" mode: same chart, but the bars are different calendar
   // months of ONE station instead of different stations.
   const [compareMode, setCompareMode] = useState<CompareMode>('stations');
-  const [monthStationName, setMonthStationName] = useState<string>('');
+  // Defaults to the first station once the list loads, so switching to
+  // "Compare months" always has a station already selected.
+  const [monthStationChoice, setMonthStationChoice] = useState<string>('');
+  const monthStationName = monthStationChoice || stations[0]?.station_name || '';
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]); // 'yyyy-MM' keys
   const [monthPickerValue, setMonthPickerValue] = useState<Date | null>(null);
-  const [monthlyHourly, setMonthlyHourly] = useState<Record<string, HourlyDataRow[]>>({});
-  const [monthlyLoading, setMonthlyLoading] = useState(false);
-  const [monthlyError, setMonthlyError] = useState<string | null>(null);
-
-  // Default the month-mode station picker to the first station once the
-  // list loads, so switching to "Compare months" always has a station
-  // already selected instead of an empty chart.
-  useEffect(() => {
-    if (!monthStationName && stations.length > 0) {
-      setMonthStationName(stations[0].station_name);
-    }
-  }, [stations, monthStationName]);
-
   function addMonth(date: Date | null) {
     if (!date) return;
     const key = monthKeyOf(date);
@@ -571,100 +359,51 @@ export default function ComparePage() {
     setSelectedMonths((prev) => prev.filter((m) => m !== key));
   }
 
-  // Fetch hourly data for each selected month of the selected station.
-  useEffect(() => {
-    if (compareMode !== 'months' || !monthStationName || selectedMonths.length === 0) return;
-    let cancelled = false;
+  // Bottom table: a fixed trailing window per station. The start is rounded
+  // down to the hour so the query key is stable and revisits hit the cache.
+  const tableWindowStartISO = hourFloorISO(nowMs - WINDOW_DAYS * DAY_MS);
+  const tableQuery = useHourlyMany(
+    stations.map((s) => ({ key: s.station_name, stationName: s.station_name, start: tableWindowStartISO })),
+    stations.length > 0
+  );
 
-    async function loadMonths() {
-      setMonthlyLoading(true);
-      try {
-        const results = await Promise.all(
-          selectedMonths.map(async (key) => {
-            const { start, end } = monthRangeISO(key);
-            try {
-              const hourly = await apiClient.getHourlyAggregation(monthStationName, { start_date: start, end_date: end });
-              return [key, hourly.data] as const;
-            } catch {
-              // 404 (no readings that month) — show it as "no data", not a page error.
-              return [key, []] as const;
-            }
-          })
-        );
-        if (cancelled) return;
-        setMonthlyHourly(Object.fromEntries(results));
-        setMonthlyError(null);
-      } catch (err) {
-        if (!cancelled) setMonthlyError(err instanceof Error ? err.message : 'Failed to load monthly data');
-      } finally {
-        if (!cancelled) setMonthlyLoading(false);
-      }
-    }
-    loadMonths();
+  const tableRows: StationComparison[] = useMemo(() => {
+    const results = stations.map((station): StationComparison => {
+      const rows = tableQuery.byKey[station.station_name] ?? [];
+      const summary = summarizeWindow(rows);
+      return {
+        station,
+        waterProducedL: summary.waterProducedL,
+        lastEfficiencyPct: summary.lastEfficiencyPct,
+        lastSpecificEnergyKWhPerL: summary.lastSpecificEnergyKWhPerL,
+        hasRecentData: rows.length > 0,
+      };
+    });
+    // Online stations first (stable partition), then by water produced
+    // within each group — so an active station never gets buried below
+    // a wall of offline ones just because it produced less this window.
+    results.sort((a, b) => {
+      const aOnline = a.station.status === 'active';
+      const bOnline = b.station.status === 'active';
+      if (aOnline !== bOnline) return aOnline ? -1 : 1;
+      return (b.waterProducedL ?? -1) - (a.waterProducedL ?? -1);
+    });
+    return results;
+  }, [stations, tableQuery.byKey]);
+
+  const loading = stationsQuery.isLoading || (stations.length > 0 && tableQuery.isLoading);
+  const error = stationsQuery.error ? stationsQuery.error.message : tableQuery.error;
+
+  // After 6s of the page-level skeleton, explain why it's slow.
+  const [slowLoad, setSlowLoad] = useState(false);
+  useEffect(() => {
+    if (!loading) return;
+    const t = setTimeout(() => setSlowLoad(true), 6000);
     return () => {
-      cancelled = true;
+      clearTimeout(t);
+      setSlowLoad(false);
     };
-  }, [compareMode, monthStationName, selectedMonths]);
-
-  // Load the station list + the fixed-window bottom table once.
-  useEffect(() => {
-    let slowTimer: ReturnType<typeof setTimeout>;
-    async function load() {
-      try {
-        setLoading(true);
-        slowTimer = setTimeout(() => setSlowLoad(true), 6000);
-        const stationList = filterVisibleStations(await apiClient.getStations());
-        const startDate = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
-
-        const results = await Promise.all(
-          stationList.map(async (station): Promise<StationComparison> => {
-            try {
-              const hourly = await apiClient.getHourlyAggregation(station.station_name, { start_date: startDate });
-              const summary = summarizeWindow(hourly.data);
-              return {
-                station,
-                waterProducedL: summary.waterProducedL,
-                lastEfficiencyPct: summary.lastEfficiencyPct,
-                lastSpecificEnergyKWhPerL: summary.lastSpecificEnergyKWhPerL,
-                hasRecentData: hourly.data.length > 0,
-              };
-            } catch {
-              // 404 (no readings in range) is expected for long-inactive stations —
-              // show them as "no data," not as a page-level error.
-              return {
-                station,
-                waterProducedL: null,
-                lastEfficiencyPct: null,
-                lastSpecificEnergyKWhPerL: null,
-                hasRecentData: false,
-              };
-            }
-          })
-        );
-
-        // Online stations first (stable partition), then by water produced
-        // within each group — so an active station never gets buried below
-        // a wall of offline ones just because it produced less this window.
-        results.sort((a, b) => {
-          const aOnline = a.station.status === 'active';
-          const bOnline = b.station.status === 'active';
-          if (aOnline !== bOnline) return aOnline ? -1 : 1;
-          return (b.waterProducedL ?? -1) - (a.waterProducedL ?? -1);
-        });
-        setStations(stationList);
-        setTableRows(results);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load station comparison');
-      } finally {
-        setLoading(false);
-        setSlowLoad(false);
-        clearTimeout(slowTimer);
-      }
-    }
-    load();
-    return () => clearTimeout(slowTimer);
-  }, []);
+  }, [loading]);
 
   // rangeDurationDays: the window length in days (used by 'per-station'
   // mode, and to derive the same-time absolute bounds for the preset
@@ -694,68 +433,67 @@ export default function ComparePage() {
       return { rangeDurationDays: null, rangeStartISO: null, rangeEndISO: null, rangeLabel: 'All time', rangeReady: true };
     }
     const days = RANGE_PRESET_DAYS[rangePreset];
-    const end = new Date();
-    const start = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    // Rounded down to the hour so re-selecting a preset reuses the cached query.
+    const endISO = hourFloorISO(nowMs);
+    const startISO = hourFloorISO(nowMs - days * DAY_MS);
     const label =
       alignMode === 'same-time' ? `Last ${days} days · same dates for every station` : `Last ${days} days · each station's most recent data`;
-    return { rangeDurationDays: days, rangeStartISO: start.toISOString(), rangeEndISO: end.toISOString(), rangeLabel: label, rangeReady: true };
-  }, [rangePreset, customStart, customEnd, alignMode]);
+    return { rangeDurationDays: days, rangeStartISO: startISO, rangeEndISO: endISO, rangeLabel: label, rangeReady: true };
+  }, [rangePreset, customStart, customEnd, alignMode, nowMs]);
 
-  // Re-fetch hourly data for the chart whenever the selected range or
-  // alignment mode changes. Deliberately independent of the bottom table's
-  // fixed WINDOW_DAYS fetch — that table always uses today's date for every
-  // station, which neither mode here does exactly.
-  useEffect(() => {
-    if (compareMode !== 'stations' || !rangeReady || stations.length === 0) return;
-    let cancelled = false;
-
-    async function loadChart() {
-      setChartLoading(true);
-      try {
-        const results = await Promise.all(
-          stations.map(async (station) => {
-            try {
-              let start_date: string | undefined;
-              let end_date: string | undefined;
-              if (alignMode === 'same-time') {
-                // Identical bounds for every station — the rigorous
-                // apples-to-apples comparison, at the cost of showing
-                // nothing for a station that wasn't running in this window.
-                start_date = rangeStartISO ?? undefined;
-                end_date = rangeEndISO ?? undefined;
-              } else if (rangeDurationDays != null) {
-                const lastReading = station.metadata.last_reading;
-                if (!lastReading) {
-                  // Never reported anything — no data point to anchor a
-                  // trailing window to, regardless of duration.
-                  return [station.station_name, []] as const;
-                }
-                const end = new Date(lastReading);
-                const start = new Date(end.getTime() - rangeDurationDays * 24 * 60 * 60 * 1000);
-                start_date = start.toISOString();
-                end_date = end.toISOString();
-              }
-              const hourly = await apiClient.getHourlyAggregation(station.station_name, { start_date, end_date });
-              return [station.station_name, hourly.data] as const;
-            } catch {
-              return [station.station_name, []] as const;
-            }
-          })
-        );
-        if (cancelled) return;
-        setChartHourly(Object.fromEntries(results));
-        setChartError(null);
-      } catch (err) {
-        if (!cancelled) setChartError(err instanceof Error ? err.message : 'Failed to load chart data');
-      } finally {
-        if (!cancelled) setChartLoading(false);
+  // One hourly query per station for the chart, keyed on that station's own
+  // window. Independent of the bottom table's fixed WINDOW_DAYS fetch — that
+  // table always uses today's date for every station, which neither mode
+  // here does exactly.
+  const chartRequests: HourlyRequest[] = useMemo(() => {
+    const reqs: HourlyRequest[] = [];
+    for (const station of stations) {
+      if (alignMode === 'same-time') {
+        // Identical bounds for every station — the rigorous apples-to-apples
+        // comparison, at the cost of showing nothing for a station that
+        // wasn't running in this window.
+        reqs.push({
+          key: station.station_name,
+          stationName: station.station_name,
+          start: rangeStartISO ?? undefined,
+          end: rangeEndISO ?? undefined,
+        });
+      } else if (rangeDurationDays != null) {
+        const lastReading = station.metadata.last_reading;
+        // Never reported anything — no data point to anchor a trailing
+        // window to, regardless of duration.
+        if (!lastReading) continue;
+        const end = new Date(lastReading);
+        reqs.push({
+          key: station.station_name,
+          stationName: station.station_name,
+          start: new Date(end.getTime() - rangeDurationDays * DAY_MS).toISOString(),
+          end: end.toISOString(),
+        });
+      } else {
+        reqs.push({ key: station.station_name, stationName: station.station_name });
       }
     }
-    loadChart();
-    return () => {
-      cancelled = true;
-    };
-  }, [compareMode, stations, rangeDurationDays, rangeStartISO, rangeEndISO, rangeReady, alignMode]);
+    return reqs;
+  }, [stations, alignMode, rangeDurationDays, rangeStartISO, rangeEndISO]);
+  const chartQuery = useHourlyMany(chartRequests, compareMode === 'stations' && rangeReady && stations.length > 0);
+  const chartHourly = chartQuery.byKey;
+  const chartLoading = chartQuery.isFetching;
+  const chartError = chartQuery.error;
+
+  // "Compare months": one hourly query per selected month of the chosen station.
+  const monthRequests: HourlyRequest[] = useMemo(
+    () =>
+      selectedMonths.map((key) => {
+        const { start, end } = monthRangeISO(key);
+        return { key, stationName: monthStationName, start, end };
+      }),
+    [selectedMonths, monthStationName]
+  );
+  const monthlyQuery = useHourlyMany(monthRequests, compareMode === 'months' && !!monthStationName);
+  const monthlyHourly = monthlyQuery.byKey;
+  const monthlyLoading = monthlyQuery.isFetching;
+  const monthlyError = monthlyQuery.error;
 
   const activeMeasurement = MEASUREMENTS.find((m) => m.key === measurement)!;
 
@@ -802,8 +540,8 @@ export default function ComparePage() {
   if (loading) {
     return (
       <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 6, maxWidth: '1200px', mx: 'auto' }}>
-        <Skeleton variant="text" width={280} height={48} sx={{ mx: 'auto', mb: 1 }} />
-        <Skeleton variant="text" width={460} height={28} sx={{ mx: 'auto', mb: slowLoad ? 1 : 5 }} />
+        <Skeleton variant="text" width={280} height={48} sx={{ maxWidth: '100%', mx: 'auto', mb: 1 }} />
+        <Skeleton variant="text" width={460} height={28} sx={{ maxWidth: '100%', mx: 'auto', mb: slowLoad ? 1 : 5 }} />
         {slowLoad && (
           <Typography
             variant="body2"
@@ -1067,7 +805,7 @@ export default function ComparePage() {
                     labelId="compare-month-station-label"
                     label="Station"
                     value={monthStationName}
-                    onChange={(e: SelectChangeEvent) => setMonthStationName(e.target.value)}
+                    onChange={(e: SelectChangeEvent) => setMonthStationChoice(e.target.value)}
                     sx={{ backgroundColor: 'background.paper', borderRadius: 1.5 }}
                   >
                     {stations.map((s) => (

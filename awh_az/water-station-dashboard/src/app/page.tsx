@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useMemo } from 'react';
 import { Typography, Box, Link as MuiLink, Skeleton, Alert } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { ArrowForward } from '@mui/icons-material';
 import Link from 'next/link';
-import { apiClient, type StationInfo, type ImpactResponse } from '@/lib/api-client';
+import { useStations, useImpact } from '@/hooks/queries';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 import { filterVisibleStations } from '@/lib/hiddenStations';
 
@@ -18,41 +18,17 @@ export default function Home() {
   const statRed = isDark ? '#e5484d' : '#901340';
   const statGreen = isDark ? '#4caf50' : '#2e7d32';
   const statGold = '#ffcb25';
-  const [stations, setStations] = useState<StationInfo[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [impact, setImpact] = useState<ImpactResponse | null>(null);
-
-  useEffect(() => {
-    async function fetchStations() {
-      try {
-        setLoading(true);
-        const data = await apiClient.getStations();
-        setStations(filterVisibleStations(data));
-        setError(null);
-      } catch (err) {
-        console.error('Failed to fetch stations:', err);
-        setError(err instanceof Error ? err.message : 'Failed to load stations');
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    // Fetched separately from stations — a failure here (e.g. lifetime
-    // totals haven't been computed for any station yet) shouldn't break
-    // the rest of the homepage.
-    async function fetchImpact() {
-      try {
-        const data = await apiClient.getImpact();
-        setImpact(data);
-      } catch (err) {
-        console.error('Failed to fetch impact totals:', err);
-      }
-    }
-
-    fetchStations();
-    fetchImpact();
-  }, []);
+  const stationsQuery = useStations();
+  const stations = useMemo(
+    () => filterVisibleStations(stationsQuery.data ?? []),
+    [stationsQuery.data]
+  );
+  const loading = stationsQuery.isLoading;
+  const error = stationsQuery.error ? stationsQuery.error.message : null;
+  // Fetched separately from stations — a failure here (e.g. lifetime
+  // totals haven't been computed for any station yet) shouldn't break
+  // the rest of the homepage.
+  const impact = useImpact().data ?? null;
 
   // Used only for the stats row below — the full station list with cards
   // now lives on its own page (/stations).
@@ -65,8 +41,8 @@ export default function Home() {
       <Box sx={{ width: '100%' }}>
         <Skeleton variant="rectangular" width="100%" height={420} />
         <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 6, maxWidth: '1400px', mx: 'auto' }}>
-          <Skeleton variant="text" width={260} height={48} sx={{ mx: 'auto', mb: 1 }} />
-          <Skeleton variant="text" width={420} height={28} sx={{ mx: 'auto', mb: 5 }} />
+          <Skeleton variant="text" width={260} height={48} sx={{ maxWidth: '100%', mx: 'auto', mb: 1 }} />
+          <Skeleton variant="text" width={420} height={28} sx={{ maxWidth: '100%', mx: 'auto', mb: 5 }} />
           <Box
             sx={{
               display: 'grid',
@@ -167,7 +143,7 @@ export default function Home() {
               fontStyle: 'italic',
             }}
           >
-            Harvesting Tomorrow's Water, Today
+            Harvesting Tomorrow&apos;s Water, Today
           </Typography>
         </Box>
       </Box>
