@@ -27,7 +27,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { ArrowBack, Circle as CircleIcon, CalendarMonth, Tune } from '@mui/icons-material';
 import { format } from 'date-fns';
-import FeaturePlot from '@/components/FeaturePlot';
+import FeaturePlot, { type ChartZoomRange } from '@/components/FeaturePlot';
 import { type StationInfo, type StationReading, type HourlyDataRow } from '@/lib/api-client';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 import { FeatureType, ChartDataPoint, StationData } from '@/types';
@@ -79,6 +79,7 @@ export default function StationDetails() {
   const [volumeUnit, setVolumeUnit] = useState<VolumeUnit>('L');
   const [selectedUnit, setSelectedUnit] = useState<string>('');
   const [selectedParameters, setSelectedParameters] = useState<string[]>([]);
+  const [chartZoom, setChartZoom] = useState<ChartZoomRange | null>(null);
 
   // Dialog states
   const [dateDialogOpen, setDateDialogOpen] = useState(false);
@@ -111,6 +112,7 @@ export default function StationDetails() {
     const autoStart = new Date(maxTime - 7 * 24 * 60 * 60 * 1000); // 7 days before latest
     setStartDate(autoStart);
     setEndDate(autoEnd);
+    setChartZoom(null);
     setTempStartDate(autoStart);
     setTempEndDate(autoEnd);
 
@@ -174,6 +176,7 @@ export default function StationDetails() {
     if (!tempStartDate || !tempEndDate) return;
     setStartDate(tempStartDate);
     setEndDate(tempEndDate);
+    setChartZoom(null);
   };
 
   // Handle parameters apply
@@ -829,6 +832,8 @@ export default function StationDetails() {
             endDate={format(endDate, 'yyyy-MM-dd')}
             paramNames={[fieldDisplayNames[field] || field]}
             paramUnits={[fieldUnitFor(field, volumeUnit)]}
+            zoomRange={chartZoom}
+            onZoomChange={setChartZoom}
           />
         </motion.div>
       ))}
@@ -861,6 +866,8 @@ export default function StationDetails() {
               paramNames={['Water Production Rate (Hourly)']}
               paramUnits={[`${UNIT_LABEL[volumeUnit]}/h`]}
               chartType="bar"
+              zoomRange={chartZoom}
+              onZoomChange={setChartZoom}
             />
           )}
         </motion.div>
@@ -880,6 +887,8 @@ export default function StationDetails() {
             paramNames={['Specific Energy Consumption (Hourly)']}
             paramUnits={[`kWh/${UNIT_LABEL[volumeUnit]}`]}
             chartType="bar"
+            zoomRange={chartZoom}
+            onZoomChange={setChartZoom}
           />
         </motion.div>
       )}
@@ -898,6 +907,8 @@ export default function StationDetails() {
             paramNames={['Harvesting Efficiency (Hourly)']}
             paramUnits={['%']}
             chartType="bar"
+            zoomRange={chartZoom}
+            onZoomChange={setChartZoom}
           />
         </motion.div>
       )}

@@ -22,6 +22,11 @@ import { FeatureType, ChartDataPoint } from '@/types';
 import { formatPhoenixTime, formatPhoenixFullDateTime, phoenixDateKey } from '@/lib/timezone';
 import { downsampleMinMax } from '@/lib/downsample';
 
+export interface ChartZoomRange {
+  start: number;
+  end: number;
+}
+
 interface FeaturePlotProps {
   data: ChartDataPoint[];
   feature: FeatureType;
@@ -33,9 +38,22 @@ interface FeaturePlotProps {
    * hourly-aggregated series, where each point is its own hour's value rather
    * than a sample of a continuous signal. */
   chartType?: 'area' | 'bar';
+  /** Shared time window so zooming any station chart updates all of them. */
+  zoomRange?: ChartZoomRange | null;
+  onZoomChange?: (range: ChartZoomRange | null) => void;
 }
 
-const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, endDate, paramNames, paramUnits, chartType = 'area' }) => {
+const FeaturePlot: React.FC<FeaturePlotProps> = ({
+  data,
+  feature,
+  startDate,
+  endDate,
+  paramNames,
+  paramUnits,
+  chartType = 'area',
+  zoomRange = null,
+  onZoomChange,
+}) => {
   const isBar = chartType === 'bar';
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
@@ -56,15 +74,12 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
   const unit1 = paramUnits?.[0] || '';
   const unit2 = paramUnits?.[1] || '';
 
-  // Drag-to-zoom (continuous charts only). Zooming re-downsamples from the
-  // full series, so a zoomed-in view shows real detail rather than a
-  // magnified copy of the coarse overview. The zoom is tied to the `data`
-  // array it was made on, so applying a new date range resets it.
-  const [zoomState, setZoomState] = React.useState<{ data: ChartDataPoint[]; start: number; end: number } | null>(null);
+  // The station page owns the zoom range so every sensor and hourly chart
+  // displays the same selected time window.
   const [dragLeft, setDragLeft] = React.useState<string | null>(null);
   const [dragRight, setDragRight] = React.useState<string | null>(null);
-  const zoom = zoomState && zoomState.data === data ? zoomState : null;
-  const canZoom = !isBar;
+  const zoom = zoomRange;
+  const canZoom = Boolean(onZoomChange);
 
   const visibleData = React.useMemo(
     () =>
@@ -86,7 +101,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
     if (dragLeft && dragRight && dragLeft !== dragRight) {
       const a = new Date(dragLeft).getTime();
       const b = new Date(dragRight).getTime();
-      setZoomState({ data, start: Math.min(a, b), end: Math.max(a, b) });
+      onZoomChange?.({ start: Math.min(a, b), end: Math.max(a, b) });
     }
     setDragLeft(null);
     setDragRight(null);
@@ -200,7 +215,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
         </Box>
         {canZoom && (
           zoom ? (
-            <Button size="small" startIcon={<ZoomOutMap />} onClick={() => setZoomState(null)}>
+            <Button size="small" startIcon={<ZoomOutMap />} onClick={() => onZoomChange?.(null)}>
               Reset zoom ({visibleData.length.toLocaleString()} readings)
             </Button>
           ) : (
@@ -260,6 +275,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
               />
               <YAxis
                 yAxisId="left"
+                domain={zoom ? ['dataMin', 'dataMax'] : [0, 'auto']}
                 stroke={chartAxisStroke}
                 tickFormatter={(v: number) => unit1 ? `${typeof v === 'number' ? Number(v).toFixed(1) : v} ${unit1}` : String(v)}
                 label={isPhone ? undefined : {
@@ -278,6 +294,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({ data, feature, startDate, end
                 <YAxis
                   yAxisId="right"
                   orientation="right"
+                  domain={zoom ? ['dataMin', 'dataMax'] : [0, 'auto']}
                   stroke={chartAxisStroke}
                   tickFormatter={(v: number) => unit2 ? `${typeof v === 'number' ? Number(v).toFixed(1) : v} ${unit2}` : String(v)}
                   label={isPhone ? undefined : {
