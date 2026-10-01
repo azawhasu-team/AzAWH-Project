@@ -19,9 +19,10 @@ import { freshnessOf, formatAge } from '@/lib/freshness';
 
 interface StationCardProps {
   station: Station;
+  nowMs: number;
 }
 
-const StationCard: React.FC<StationCardProps> = ({ station }) => {
+const StationCard: React.FC<StationCardProps> = ({ station, nowMs }) => {
   const router = useRouter();
 
   // station.name is already display_name || station_name (see stations/page.tsx),
@@ -31,9 +32,6 @@ const StationCard: React.FC<StationCardProps> = ({ station }) => {
     router.push(`/stations/${encodeURIComponent(slugify(station.name))}`);
   };
 
-  // Lazy initial value keeps render pure; the age is only as fresh as the
-  // last list fetch, which is fine for a coarse Live / Delayed / Not sending label.
-  const [nowMs] = React.useState(() => Date.now());
   const fresh = freshnessOf(station.lastReading, nowMs);
 
   const getStatusColor = (status: string) => {

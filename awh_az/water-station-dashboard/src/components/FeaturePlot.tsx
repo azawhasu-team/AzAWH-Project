@@ -14,13 +14,15 @@ import {
   ReferenceArea,
   ResponsiveContainer,
 } from 'recharts';
-import { Box, Typography, Paper, Button } from '@mui/material';
+import { Box, Typography, Paper, Button, Alert } from '@mui/material';
 import { ZoomOutMap } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { FeatureType, ChartDataPoint } from '@/types';
 import { formatPhoenixTime, formatPhoenixFullDateTime, phoenixDateKey } from '@/lib/timezone';
 import { downsampleMinMax } from '@/lib/downsample';
+import { detectFlatPower } from '@/lib/powerStatus';
+import { snapBandToDates, type AnomalyBand } from '@/lib/anomalies';
 
 export interface ChartZoomRange {
   start: number;
@@ -38,10 +40,22 @@ interface FeaturePlotProps {
    * hourly-aggregated series, where each point is its own hour's value rather
    * than a sample of a continuous signal. */
   chartType?: 'area' | 'bar';
+  /** Model-flagged unusual-activity intervals to shade (continuous charts only). */
+  anomalyBands?: AnomalyBand[];
   /** Shared time window so zooming any station chart updates all of them. */
   zoomRange?: ChartZoomRange | null;
   onZoomChange?: (range: ChartZoomRange | null) => void;
+  /** Power chart: draw flat/unchanging stretches red, changing ones green, and
+   * alert when the newest reading is still flat. Continuous charts only. */
+  powerStatus?: boolean;
 }
+
+const formatDuration = (ms: number): string => {
+  const mins = Math.max(1, Math.round(ms / 60_000));
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  return h < 48 ? `${h} h ${mins % 60} min` : `${Math.round(h / 24)} days`;
+};
 
 const FeaturePlot: React.FC<FeaturePlotProps> = ({
   data,
@@ -51,8 +65,10 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
   paramNames,
   paramUnits,
   chartType = 'area',
+  anomalyBands,
   zoomRange = null,
   onZoomChange,
+  powerStatus = false,
 }) => {
   const isBar = chartType === 'bar';
   const theme = useTheme();
@@ -74,8 +90,9 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
   const unit1 = paramUnits?.[0] || '';
   const unit2 = paramUnits?.[1] || '';
 
-  // The station page owns the zoom range so every sensor and hourly chart
-  // displays the same selected time window.
+  // Drag-to-zoom uses a range owned by the station page. Every raw and hourly
+  // chart therefore receives the same window and re-samples its own full data
+  // rather than magnifying a previously down-sampled view.
   const [dragLeft, setDragLeft] = React.useState<string | null>(null);
   const [dragRight, setDragRight] = React.useState<string | null>(null);
   const zoom = zoomRange;
@@ -95,7 +112,44 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
   const MAX_POINTS = 500;
   // Peak-preserving downsample (see lib/downsample.ts) — plain every-Nth-point
   // sampling can drop an isolated spike, which is what this chart must show.
-  const plotData = React.useMemo(() => downsampleMinMax(visibleData, MAX_POINTS), [visibleData]);
+  const downsampled = React.useMemo(() => downsampleMinMax(visibleData, MAX_POINTS), [visibleData]);
+
+  // Classified on the full series so zooming never changes what counts as flat.
+  const flatPower = React.useMemo(
+    () => (powerStatus && !isBar ? detectFlatPower(data) : null),
+    [powerStatus, isBar, data]
+  );
+
+  // Two series (running = green, flat = red) instead of one recolored line.
+  // The first point on each side of a switch is copied into both series so
+  // the colors meet without a visible break.
+  const plotData = React.useMemo(() => {
+    if (!flatPower) return downsampled;
+    const isFlat = (i: number) => flatPower.flatDates.has(downsampled[i].date);
+    return downsampled.map((d, i) => {
+      if (d.value == null) return { ...d, runningValue: null, flatValue: null };
+      const flat = isFlat(i);
+      const touchesOther =
+        (i > 0 && downsampled[i - 1].value != null && isFlat(i - 1) !== flat) ||
+        (i < downsampled.length - 1 && downsampled[i + 1].value != null && isFlat(i + 1) !== flat);
+      return {
+        ...d,
+        runningValue: !flat || touchesOther ? d.value : null,
+        flatValue: flat || touchesOther ? d.value : null,
+      };
+    });
+  }, [downsampled, flatPower]);
+
+  // Bands are drawn on the categorical x-axis, so each must snap to points that
+  // are actually plotted (which changes as the chart is zoomed and re-sampled).
+  const snappedBands = React.useMemo(() => {
+    if (isBar || !anomalyBands?.length) return [];
+    const dates = plotData.map(d => d.date);
+    return anomalyBands.flatMap(b => {
+      const snapped = snapBandToDates(dates, b.startMs, b.endMs);
+      return snapped ? [{ ...snapped, eventNumber: b.eventNumber }] : [];
+    });
+  }, [isBar, anomalyBands, plotData]);
 
   const commitDrag = () => {
     if (dragLeft && dragRight && dragLeft !== dragRight) {
@@ -212,6 +266,11 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
             {plotData.length < visibleData.length &&
               ` · showing ${plotData.length.toLocaleString()} points, peaks preserved`}
           </Typography>
+          {snappedBands.length > 0 && (
+            <Typography variant="caption" sx={{ display: 'block', color: '#e65100', fontWeight: 600 }}>
+              Shaded and numbered: unusual activity (see the list above the charts)
+            </Typography>
+          )}
         </Box>
         {canZoom && (
           zoom ? (
@@ -227,6 +286,21 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
           )
         )}
       </Box>
+
+      {flatPower && (
+        flatPower.currentRun ? (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            Power has not changed since {formatPhoenixFullDateTime(new Date(flatPower.currentRun.startMs))}
+            {' '}({formatDuration(flatPower.currentRun.endMs - flatPower.currentRun.startMs)}) — the station may be off
+            or the power meter stuck.
+          </Alert>
+        ) : flatPower.runs.length > 0 ? (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            Power is changing normally (running). {flatPower.runs.length} flat stretch
+            {flatPower.runs.length === 1 ? '' : 'es'} earlier in this range, shown in red.
+          </Alert>
+        ) : null
+      )}
 
       {data.length === 0 ? (
         <Box
@@ -334,7 +408,34 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
                 iconType="circle"
                 iconSize={10}
               />
-              {isBar ? (
+              {flatPower ? (
+                <>
+                  <Area
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="runningValue"
+                    stroke="#2e7d32"
+                    strokeWidth={2}
+                    fill="#2e7d32"
+                    fillOpacity={0.12}
+                    dot={false}
+                    activeDot={{ r: 5, fill: '#2e7d32', stroke: 'white', strokeWidth: 2 }}
+                    name={`${param1Name} (running)`}
+                  />
+                  <Area
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="flatValue"
+                    stroke="#d32f2f"
+                    strokeWidth={2}
+                    fill="#d32f2f"
+                    fillOpacity={0.12}
+                    dot={false}
+                    activeDot={{ r: 5, fill: '#d32f2f', stroke: 'white', strokeWidth: 2 }}
+                    name={`${param1Name} (no change)`}
+                  />
+                </>
+              ) : isBar ? (
                 <Bar
                   yAxisId="left"
                   dataKey="value"
@@ -378,6 +479,23 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
                   />
                 )
               )}
+              {snappedBands.map((b) => (
+                // A band shorter than the point spacing collapses to zero width,
+                // so the outline keeps it visible; the number ties it to the list.
+                <ReferenceArea
+                  key={`anomaly-${b.eventNumber}`}
+                  yAxisId="left"
+                  x1={b.x1}
+                  x2={b.x2}
+                  fill="#e65100"
+                  fillOpacity={0.16}
+                  stroke="#e65100"
+                  strokeWidth={2}
+                  strokeOpacity={0.6}
+                  ifOverflow="hidden"
+                  label={{ value: String(b.eventNumber), position: 'insideTop', fill: '#e65100', fontSize: 12, fontWeight: 700 }}
+                />
+              ))}
               {canZoom && dragLeft && dragRight && (
                 <ReferenceArea yAxisId="left" x1={dragLeft} x2={dragRight} strokeOpacity={0.3} fill="#1e88e5" fillOpacity={0.12} />
               )}

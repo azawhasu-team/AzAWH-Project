@@ -52,9 +52,10 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { format } from 'date-fns';
 import type { StationInfo } from '@/lib/api-client';
 import { useStations, useHourlyMany, type HourlyRequest } from '@/hooks/queries';
+import { useFreshnessClock } from '@/hooks/useFreshnessClock';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 import { filterVisibleStations } from '@/lib/hiddenStations';
-import { freshnessOf, formatAge } from '@/lib/freshness';
+import { freshnessOf, formatAge, isStationOnline } from '@/lib/freshness';
 import {
   type Measurement,
   type VolumeUnit,
@@ -323,8 +324,10 @@ export default function ComparePage() {
   const chartTickColorMuted = '#888';
   const chartMarkerColor = isDark ? '#f0f0f0' : '#1a1a1a';
   const chartLegendColor = isDark ? theme.palette.text.secondary : '#484848';
-  // "Now" for this page visit, fixed so every preset window and query key is stable.
-  const [nowMs] = useState(() => Date.now());
+  // Keep presence current so a station automatically returns to Offline after
+  // 15 minutes without a reading. Hour-rounded query keys stay stable between
+  // clock ticks.
+  const nowMs = useFreshnessClock();
   const stationsQuery = useStations();
   const stations = useMemo(
     () => filterVisibleStations(stationsQuery.data ?? []),
@@ -383,13 +386,13 @@ export default function ComparePage() {
     // within each group — so an active station never gets buried below
     // a wall of offline ones just because it produced less this window.
     results.sort((a, b) => {
-      const aOnline = a.station.status === 'active';
-      const bOnline = b.station.status === 'active';
+      const aOnline = isStationOnline(a.station.metadata.last_reading, nowMs);
+      const bOnline = isStationOnline(b.station.metadata.last_reading, nowMs);
       if (aOnline !== bOnline) return aOnline ? -1 : 1;
       return (b.waterProducedL ?? -1) - (a.waterProducedL ?? -1);
     });
     return results;
-  }, [stations, tableQuery.byKey]);
+  }, [stations, tableQuery.byKey, nowMs]);
 
   const loading = stationsQuery.isLoading || (stations.length > 0 && tableQuery.isLoading);
   const error = stationsQuery.error ? stationsQuery.error.message : tableQuery.error;
@@ -526,7 +529,7 @@ export default function ComparePage() {
   const activeChartError = compareMode === 'months' ? monthlyError : chartError;
 
   const quickStats = useMemo(() => {
-    const liveCount = tableRows.filter((r) => freshnessOf(r.station.metadata.last_reading).label === 'Live').length;
+    const liveCount = tableRows.filter((r) => isStationOnline(r.station.metadata.last_reading, nowMs)).length;
     const reportingCount = tableRows.filter((r) => r.hasRecentData).length;
     const totalWaterL = tableRows.reduce((sum, r) => sum + (r.waterProducedL ?? 0), 0);
     const topPoint = plottedData.reduce<ChartPoint | null>((best, p) => {
@@ -535,7 +538,7 @@ export default function ComparePage() {
       return best;
     }, null);
     return { liveCount, reportingCount, totalStations: tableRows.length, totalWaterL, topPoint };
-  }, [tableRows, plottedData]);
+  }, [tableRows, plottedData, nowMs]);
 
   if (loading) {
     return (
@@ -581,7 +584,7 @@ export default function ComparePage() {
   const maxSpecificEnergy = Math.max(0, ...tableRows.map((r) => r.lastSpecificEnergyKWhPerL ?? 0));
   // tableRows is sorted online-first, so this is the boundary where a
   // divider row belongs — 0 or -1 (no offline stations at all) means skip it.
-  const firstOfflineIndex = tableRows.findIndex((r) => r.station.status !== 'active');
+  const firstOfflineIndex = tableRows.findIndex((r) => !isStationOnline(r.station.metadata.last_reading, nowMs));
 
   return (
     <Box
@@ -1091,7 +1094,7 @@ export default function ComparePage() {
                     hover
                     sx={{
                       backgroundColor: i % 2 === 1 ? 'action.hover' : 'transparent',
-                      borderLeft: `3px solid ${station.status === 'active' ? '#2e7d32' : 'transparent'}`,
+                      borderLeft: `3px solid ${isStationOnline(station.metadata.last_reading, nowMs) ? '#2e7d32' : 'transparent'}`,
                       transition: 'background-color 150ms ease',
                     }}
                   >
@@ -1104,11 +1107,11 @@ export default function ComparePage() {
                   <TableCell>
                     <Chip
                       size="small"
-                      color={station.status === 'active' ? 'success' : 'error'}
-                      label={station.status === 'active' ? 'Online' : 'Offline'}
+                      color={isStationOnline(station.metadata.last_reading, nowMs) ? 'success' : 'error'}
+                      label={isStationOnline(station.metadata.last_reading, nowMs) ? 'Online' : 'Offline'}
                       sx={{
-                        backgroundColor: station.status === 'active' ? 'success.light' : 'error.light',
-                        color: station.status === 'active' ? 'success.main' : 'error.main',
+                        backgroundColor: isStationOnline(station.metadata.last_reading, nowMs) ? 'success.light' : 'error.light',
+                        color: isStationOnline(station.metadata.last_reading, nowMs) ? 'success.main' : 'error.main',
                         fontWeight: 600,
                       }}
                     />
@@ -1150,7 +1153,7 @@ export default function ComparePage() {
                         : 'Never'}
                     </Typography>
                     {(() => {
-                      const fresh = freshnessOf(station.metadata.last_reading);
+                      const fresh = freshnessOf(station.metadata.last_reading, nowMs);
                       return (
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, mt: 0.25 }}>
                           <Box sx={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: fresh.color }} />

@@ -5,6 +5,7 @@ import {
   type HourlyAggregationResponse,
   type HourlyDataRow,
 } from '@/lib/api-client';
+import type { AnomalyFile } from '@/lib/anomalies';
 
 export const queryKeys = {
   stations: ['stations'] as const,
@@ -177,5 +178,22 @@ export function useHourlyMany(requests: HourlyRequest[], enabled = true) {
       enabled,
     })),
     combine,
+  });
+}
+
+/**
+ * Model-flagged unusual-activity windows, exported in batch to a static file
+ * (see lib/anomalies.ts). Optional: if the file is missing the dashboard simply
+ * shows no overlay, so a failed load is not retried or surfaced as an error.
+ */
+export function useAnomalies() {
+  return useQuery({
+    queryKey: ['anomalies'],
+    queryFn: async (): Promise<AnomalyFile | null> => {
+      const res = await fetch('/anomalies.json');
+      return res.ok ? res.json() : null;
+    },
+    staleTime: 60 * 60_000,
+    retry: false,
   });
 }

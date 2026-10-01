@@ -94,6 +94,18 @@ DEFAULT_REGISTRY_STATIONS = [
     },
 ]
 
+# Allow short network or upload interruptions. A station becomes Offline only
+# after it has gone 15 minutes without delivering a reading.
+STATION_ONLINE_MAX_AGE_SECONDS = 15 * 60
+STATIONS_CACHE_TTL_SECONDS = 30
+
+# Readings inside these [start, end) UTC windows are dropped from the hourly
+# calculations/graphs for that station (data judged not valid for analysis).
+# Field Testbed: Aug 8 - Sep 10 2026 inclusive. Compared as ISO strings.
+EXCLUDED_DATA_RANGES: dict[str, list[tuple[str, str]]] = {
+    "station_testbed_1@Powerplant": [("2026-08-08T00:00:00", "2026-09-11T00:00:00")],
+}
+
 
 def init_firestore():
     global db
@@ -348,7 +360,7 @@ async def get_stations():
                 last_dt = datetime.fromisoformat(last_ts_raw) if isinstance(last_ts_raw, str) else last_ts_raw
                 if last_dt.tzinfo is None:
                     last_dt = last_dt.replace(tzinfo=timezone.utc)
-                if (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600 <= 48:
+                if (datetime.now(timezone.utc) - last_dt).total_seconds() < STATION_ONLINE_MAX_AGE_SECONDS:
                     station_status = "active"
             except Exception:
                 pass
@@ -374,7 +386,7 @@ async def get_stations():
 
     stations: list[StationInfo] = [s for s in results if s is not None]
 
-    cache.set(cache_key, [s.dict() for s in stations], ttl=300)
+    cache.set(cache_key, [s.dict() for s in stations], ttl=STATIONS_CACHE_TTL_SECONDS)
     return stations
 
 
@@ -807,6 +819,26 @@ def _compute_hourly_aggregation_sync(
     if not raw:
         return None
 
+    # Drop excluded windows. The first reading after a dropped stretch is
+    # flagged so the delta loop below restarts its baselines there instead of
+    # bridging weight/energy across the whole excluded period as one lump.
+    excluded_ranges = EXCLUDED_DATA_RANGES.get(station_name)
+    if excluded_ranges:
+        kept: list[dict] = []
+        after_exclusion = False
+        for r in raw:
+            ts = r.get("timestamp", "")
+            if isinstance(ts, str) and any(lo <= ts < hi for lo, hi in excluded_ranges):
+                after_exclusion = True
+                continue
+            if after_exclusion:
+                r = {**r, "_after_exclusion": True}
+                after_exclusion = False
+            kept.append(r)
+        raw = kept
+        if not raw:
+            return None
+
     # Group by hour bucket
     from collections import defaultdict
     buckets: dict[str, list[dict]] = defaultdict(list)
@@ -898,6 +930,10 @@ def _compute_hourly_aggregation_sync(
         if not (isinstance(cur_ts, str) and len(cur_ts) >= 13):
             continue
         hour_key = cur_ts[:13] + ":00:00Z"
+
+        if cur_r.get("_after_exclusion"):
+            last_valid_weight = last_valid_weight_ts = None
+            last_valid_energy = last_valid_energy_ts = None
 
         # Water: while the station is reporting normally (gap under
         # WEIGHT_NOISE_RATE_APPLIES_UNDER_S), the noise floor is rate-scaled
@@ -1279,7 +1315,7 @@ async def get_stations_registry(
                     last_dt = datetime.fromisoformat(last_ts_raw) if isinstance(last_ts_raw, str) else last_ts_raw
                     if last_dt.tzinfo is None:
                         last_dt = last_dt.replace(tzinfo=timezone.utc)
-                    if (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600 <= 48:
+                    if (datetime.now(timezone.utc) - last_dt).total_seconds() < STATION_ONLINE_MAX_AGE_SECONDS:
                         station_status = "ACTIVE"
                 except Exception:
                     pass
@@ -1447,7 +1483,7 @@ async def list_stations_admin(_: None = Depends(require_admin_key)):
                     last_dt = datetime.fromisoformat(last_reading) if isinstance(last_reading, str) else last_reading
                     if last_dt.tzinfo is None:
                         last_dt = last_dt.replace(tzinfo=timezone.utc)
-                    if (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600 <= 48:
+                    if (datetime.now(timezone.utc) - last_dt).total_seconds() < STATION_ONLINE_MAX_AGE_SECONDS:
                         status = "active"
                 except Exception:
                     pass

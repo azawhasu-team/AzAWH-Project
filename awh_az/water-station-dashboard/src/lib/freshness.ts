@@ -7,12 +7,22 @@ export interface Freshness {
   ageSec?: number;
 }
 
+export const LIVE_MAX_AGE_SECONDS = 120;
+export const ONLINE_MAX_AGE_SECONDS = 15 * 60;
+
 export function freshnessOf(lastReading: string | null | undefined, nowMs: number = Date.now()): Freshness {
   if (!lastReading) return { label: 'Waiting for data', color: '#9e9e9e' };
   const ageSec = Math.max(0, (nowMs - new Date(lastReading).getTime()) / 1000);
-  if (ageSec < 120) return { label: 'Live', color: '#2e7d32', ageSec };
-  if (ageSec < 600) return { label: 'Delayed', color: '#ed6c02', ageSec };
+  if (ageSec < LIVE_MAX_AGE_SECONDS) return { label: 'Live', color: '#2e7d32', ageSec };
+  if (ageSec < ONLINE_MAX_AGE_SECONDS) return { label: 'Delayed', color: '#ed6c02', ageSec };
   return { label: 'Not sending', color: '#c62828', ageSec };
+}
+
+/** Keep a station online through a short interruption; 15 minutes without a reading is offline. */
+export function isStationOnline(lastReading: string | null | undefined, nowMs: number = Date.now()): boolean {
+  if (!lastReading) return false;
+  const ageSec = Math.max(0, (nowMs - new Date(lastReading).getTime()) / 1000);
+  return ageSec < ONLINE_MAX_AGE_SECONDS;
 }
 
 export function formatAge(ageSec: number | undefined): string {

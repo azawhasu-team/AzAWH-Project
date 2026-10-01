@@ -20,6 +20,7 @@ import {
   Checkbox,
   FormGroup,
   FormControlLabel,
+  Switch,
   ToggleButton,
   ToggleButtonGroup
 } from '@mui/material';
@@ -40,7 +41,9 @@ import {
 } from '@/lib/stationFields';
 import { convertLiters, convertSpecificEnergy, UNIT_LABEL, type VolumeUnit } from '@/lib/compareMath';
 import { slugify } from '@/lib/slug';
-import { useStations, useLiveReading, useLatestReadings, useStationReadingsRange, useHourly } from '@/hooks/queries';
+import { bandsForChart, intervalsInRange } from '@/lib/anomalies';
+import { LIVE_MAX_AGE_SECONDS, ONLINE_MAX_AGE_SECONDS } from '@/lib/freshness';
+import { useStations, useLiveReading, useLatestReadings, useStationReadingsRange, useHourly, useAnomalies } from '@/hooks/queries';
 import { buildParameterCategories, buildChartSeries } from '@/lib/stationChartData';
 
 export default function StationDetails() {
@@ -220,6 +223,30 @@ export default function StationDetails() {
       })),
     [startDate, endDate, selectedParameters, readings, volumeUnit]
   );
+
+  // Model-flagged unusual-activity periods (batch export, see lib/anomalies.ts)
+  const anomaliesQuery = useAnomalies();
+  const [showAnomalies, setShowAnomalies] = useState(true);
+  const anomalyFile = anomaliesQuery.data ?? null;
+  const stationAnomalies = stationName ? anomalyFile?.stations[stationName] : undefined;
+  const anomalySuppressedReason = stationName ? anomalyFile?.suppressed[stationName] : undefined;
+  const anomalyEvents = useMemo(
+    () =>
+      showAnomalies && stationAnomalies && startDate && endDate
+        ? intervalsInRange(stationAnomalies, startDate.getTime(), endDate.getTime())
+        : [],
+    [showAnomalies, stationAnomalies, startDate, endDate]
+  );
+  const [showAllAnomalyEvents, setShowAllAnomalyEvents] = useState(false);
+  const anomalyBandsByField = useMemo(() => {
+    if (!showAnomalies || !stationAnomalies || !startDate || !endDate) return {};
+    return Object.fromEntries(
+      chartDataByParam.map(({ field }) => [
+        field,
+        bandsForChart(stationAnomalies, field, startDate.getTime(), endDate.getTime()),
+      ])
+    );
+  }, [showAnomalies, stationAnomalies, startDate, endDate, chartDataByParam]);
   
   const filteredData = useMemo(() => {
     if (!startDate || !endDate || readings.length === 0) return [];
@@ -251,14 +278,6 @@ export default function StationDetails() {
     router.push('/stations');
   };
   
-  const getStatusColor = (status: string) => {
-    return status === 'active' ? 'success' : 'error';
-  };
-  
-  const getStatusIconColor = (status: string) => {
-    return status === 'active' ? '#4caf50' : '#f44336';
-  };
-  
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
@@ -286,8 +305,8 @@ export default function StationDetails() {
     ? `${format(startDate, 'MMM dd, yyyy')} - ${format(endDate, 'MMM dd, yyyy')}`
     : '';
 
-  // Freshness of the live reading — cloud upload cadence is ~60s, so anything
-  // past a couple minutes signals the station has actually stopped sending.
+  // Freshness of the live reading — show an early Delayed warning after two
+  // minutes, but allow a short upload/network interruption before going Offline.
   const liveAgeSec = liveReading
     ? Math.max(0, Math.floor((liveNowTick - new Date(liveReading.timestamp).getTime()) / 1000))
     : null;
@@ -299,9 +318,16 @@ export default function StationDetails() {
         ? `${Math.floor(liveAgeSec / 60)}m ago`
         : `${Math.floor(liveAgeSec / 3600)}h ago`;
   const liveStatus: 'fresh' | 'stale' | 'dead' | 'unknown' =
-    liveAgeSec === null ? 'unknown' : liveAgeSec < 120 ? 'fresh' : liveAgeSec < 600 ? 'stale' : 'dead';
+    liveAgeSec === null
+      ? 'unknown'
+      : liveAgeSec < LIVE_MAX_AGE_SECONDS
+        ? 'fresh'
+        : liveAgeSec < ONLINE_MAX_AGE_SECONDS
+          ? 'stale'
+          : 'dead';
   const liveStatusColor = { fresh: '#4caf50', stale: '#ff9800', dead: '#f44336', unknown: '#9e9e9e' }[liveStatus];
   const liveStatusText = { fresh: 'Live', stale: 'Delayed', dead: 'Not sending', unknown: 'Waiting for data' }[liveStatus];
+  const stationIsOnline = liveAgeSec !== null && liveAgeSec < ONLINE_MAX_AGE_SECONDS;
 
   // Totals for the selected date period — summed from the hourly aggregation rather than
   // averaging per-hour ratios, so a mostly-idle period doesn't skew the energy/liter figure.
@@ -424,15 +450,15 @@ export default function StationDetails() {
               </Typography>
               <Chip
                 icon={<CircleIcon sx={{ fontSize: 16 }} />}
-                label={station.status.charAt(0).toUpperCase() + station.status.slice(1)}
-                color={getStatusColor(station.status)}
+                label={stationIsOnline ? 'Online' : 'Offline'}
+                color={stationIsOnline ? 'success' : 'error'}
                 sx={{ 
                   fontWeight: 600,
                   fontSize: '0.95rem',
                   px: 1.5,
                   py: 2.5,
                   backgroundColor: 'white',
-                  color: station.status === 'active' ? '#4caf50' : '#f44336',
+                  color: stationIsOnline ? '#4caf50' : '#f44336',
                 }}
               />
             </Box>
@@ -818,6 +844,50 @@ export default function StationDetails() {
         </Alert>
       )}
 
+      {anomalyFile && (stationAnomalies || anomalySuppressedReason) && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 1 }}>
+          {stationAnomalies ? (
+            <>
+              <FormControlLabel
+                control={<Switch size="small" checked={showAnomalies} onChange={(e) => setShowAnomalies(e.target.checked)} />}
+                label="Show unusual activity (experimental)"
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ flex: 1, minWidth: 240 }}>
+                Periods where an Isolation Forest model saw this station behave differently from its
+                own recent normal, such as a sudden humidity jump or the water vessel being emptied.
+                Not confirmed incidents. Covers the last {anomalyFile.days_scored} days of data, scored{' '}
+                {format(new Date(anomalyFile.generated_at), 'MMM d, yyyy')}.
+              </Typography>
+            </>
+          ) : (
+            <Typography variant="caption" color="text.secondary">
+              Unusual-activity overlay unavailable for this station: {anomalySuppressedReason}.
+            </Typography>
+          )}
+        </Box>
+      )}
+
+      {anomalyEvents.length > 0 && (
+        <Box component="ol" sx={{ m: 0, mb: 2, p: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 0.5 }} aria-label="Unusual activity in this date range">
+          {(showAllAnomalyEvents ? anomalyEvents : anomalyEvents.slice(0, 5)).map((ev, i) => (
+            <Box component="li" key={ev.start} sx={{ display: 'flex', alignItems: 'baseline', gap: 1.25, fontSize: '0.85rem' }}>
+              <Box component="span" sx={{ minWidth: 22, height: 22, borderRadius: '50%', bgcolor: '#e65100', color: '#fff', fontWeight: 700, fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                {i + 1}
+              </Box>
+              <Box component="span" sx={{ fontWeight: 600 }}>{ev.summary ?? 'Unusual activity'}</Box>
+              <Box component="span" sx={{ color: 'text.secondary' }}>
+                {formatPhoenixMonthDayTime(new Date(ev.start))} – {formatPhoenixMonthDayTime(new Date(ev.end))}
+              </Box>
+            </Box>
+          ))}
+          {anomalyEvents.length > 5 && (
+            <Button size="small" onClick={() => setShowAllAnomalyEvents(v => !v)} sx={{ alignSelf: 'flex-start', textTransform: 'none' }}>
+              {showAllAnomalyEvents ? 'Show fewer' : `Show all ${anomalyEvents.length}`}
+            </Button>
+          )}
+        </Box>
+      )}
+
       {!readingsLoading && startDate && endDate && chartDataByParam.map(({ field, data }, i) => (
         <motion.div
           key={field}
@@ -832,6 +902,8 @@ export default function StationDetails() {
             endDate={format(endDate, 'yyyy-MM-dd')}
             paramNames={[fieldDisplayNames[field] || field]}
             paramUnits={[fieldUnitFor(field, volumeUnit)]}
+            anomalyBands={anomalyBandsByField[field]}
+            powerStatus={field === 'power'}
             zoomRange={chartZoom}
             onZoomChange={setChartZoom}
           />

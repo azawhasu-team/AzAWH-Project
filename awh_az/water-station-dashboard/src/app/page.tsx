@@ -6,8 +6,10 @@ import { useTheme } from '@mui/material/styles';
 import { ArrowForward } from '@mui/icons-material';
 import Link from 'next/link';
 import { useStations, useImpact } from '@/hooks/queries';
+import { useFreshnessClock } from '@/hooks/useFreshnessClock';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 import { filterVisibleStations } from '@/lib/hiddenStations';
+import { isStationOnline } from '@/lib/freshness';
 
 export default function Home() {
   const theme = useTheme();
@@ -19,6 +21,7 @@ export default function Home() {
   const statGreen = isDark ? '#4caf50' : '#2e7d32';
   const statGold = '#ffcb25';
   const stationsQuery = useStations();
+  const nowMs = useFreshnessClock();
   const stations = useMemo(
     () => filterVisibleStations(stationsQuery.data ?? []),
     [stationsQuery.data]
@@ -33,7 +36,7 @@ export default function Home() {
   // Used only for the stats row below — the full station list with cards
   // now lives on its own page (/stations).
   const stationCards = stations.map((station) => ({
-    status: (station.status === 'active' ? 'Online' : 'Offline') as 'Online' | 'Offline',
+    status: (isStationOnline(station.metadata.last_reading, nowMs) ? 'Online' : 'Offline') as 'Online' | 'Offline',
   }));
 
   if (loading) {

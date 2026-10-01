@@ -4,7 +4,9 @@ import React, { useMemo } from 'react';
 import { Typography, Box, Fade, Skeleton, Alert } from '@mui/material';
 import StationCard from '@/components/StationCard';
 import { useStations } from '@/hooks/queries';
+import { useFreshnessClock } from '@/hooks/useFreshnessClock';
 import { filterVisibleStations } from '@/lib/hiddenStations';
+import { isStationOnline } from '@/lib/freshness';
 
 // Fixed-max card width + auto-fit + centered justification, instead of a
 // fixed N-column grid — with online stations usually numbering 1-2, a rigid
@@ -20,6 +22,7 @@ const stationGridSx = {
 
 export default function StationsPage() {
   const stationsQuery = useStations();
+  const nowMs = useFreshnessClock();
   const stations = useMemo(
     () => filterVisibleStations(stationsQuery.data ?? []),
     [stationsQuery.data]
@@ -35,7 +38,7 @@ export default function StationsPage() {
       id: station.station_name,
       name: station.display_name || station.station_name,
       location: station.location || 'Arizona, USA',
-      status: (station.status === 'active' ? 'Online' : 'Offline') as 'Online' | 'Offline',
+      status: (isStationOnline(station.metadata.last_reading, nowMs) ? 'Online' : 'Offline') as 'Online' | 'Offline',
       units: [station.unit],
       image: station.image_url || undefined,
       description: station.description || undefined,
@@ -120,7 +123,7 @@ export default function StationsPage() {
         {onlineStationCards.map((station, index) => (
           <Fade key={station.id} in={true} timeout={500 + index * 100}>
             <Box sx={{ width: '100%', minWidth: 0, display: 'flex' }}>
-              <StationCard station={station} />
+              <StationCard station={station} nowMs={nowMs} />
             </Box>
           </Fade>
         ))}
@@ -143,7 +146,7 @@ export default function StationsPage() {
         {offlineStationCards.map((station, index) => (
           <Fade key={station.id} in={true} timeout={500 + index * 100}>
             <Box sx={{ width: '100%', minWidth: 0, display: 'flex' }}>
-              <StationCard station={station} />
+              <StationCard station={station} nowMs={nowMs} />
             </Box>
           </Fade>
         ))}
