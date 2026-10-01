@@ -31,6 +31,7 @@ import {
   isVolumeField,
 } from '@/lib/stationFields';
 import { convertLiters, convertSpecificEnergy, UNIT_LABEL, type VolumeUnit } from '@/lib/compareMath';
+import { formatPhoenixCsvDateTime } from '@/lib/timezone';
 
 /**
  * Raw + hourly CSV export for one station, with its own date-range picker.
@@ -265,6 +266,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                   const csvRow: Record<string, unknown> = {
                     station_name: r.station_name,
                     timestamp: r.timestamp,
+                    arizona_time: formatPhoenixCsvDateTime(r.timestamp as string),
                   };
                   rawDownloadFields.forEach(f => {
                     const v = r[f];
@@ -365,6 +367,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                 });
                 const exportData = resp.data.map(row => ({
                   'Hour': row.hour,
+                  'Arizona Time': formatPhoenixCsvDateTime(row.hour),
                   'Reading Count': row.reading_count,
                   'Temperature Mean (°C)': row.temperature_mean,
                   'Temperature Std': row.temperature_std,

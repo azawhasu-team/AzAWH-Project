@@ -40,6 +40,29 @@ export function formatPhoenixFullDateTime(date: Date): string {
   return `${weekday}, ${monthDay} ${formatPhoenixTime(date)}`;
 }
 
+// "yyyy-MM-dd HH:mm:ss" in Phoenix local time (24h, sortable) for CSV exports.
+// Returns '' for a missing/invalid timestamp.
+export function formatPhoenixCsvDateTime(value: string | Date | null | undefined): string {
+  if (value == null) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: PHOENIX_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(date)
+      .map(p => [p.type, p.value])
+  );
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
 // yyyy-mm-dd in Phoenix local time, for same-day comparisons independent of viewer timezone.
 export function phoenixDateKey(date: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
