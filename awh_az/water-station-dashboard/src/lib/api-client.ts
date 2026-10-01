@@ -51,6 +51,9 @@ export interface StationInfo {
   // metric (see HARVESTING_EFFICIENCY_FORMULA.md in the backend repo). Also
   // used server-side by /hourly to exclude hours over 3x this rate.
   expected_production_g_per_min?: number | null;
+  // Admin-entered intake cross-section (m²) — scales the theoretical-intake
+  // side of harvesting efficiency. Null/absent → default AWH_DUCT_AREA_M2.
+  intake_area_m2?: number | null;
 }
 
 export interface ReadingsResponse {

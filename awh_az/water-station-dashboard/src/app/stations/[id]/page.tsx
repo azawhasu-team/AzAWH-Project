@@ -38,6 +38,7 @@ import {
   splitStationDescription,
   convertFieldValue,
   fieldUnitFor,
+  AWH_DUCT_AREA_M2,
 } from '@/lib/stationFields';
 import { convertLiters, convertSpecificEnergy, UNIT_LABEL, type VolumeUnit } from '@/lib/compareMath';
 import { slugify } from '@/lib/slug';
@@ -66,6 +67,8 @@ export default function StationDetails() {
     [stationsQuery.data, routeSlug]
   );
   const stationName = station?.station_name ?? null;
+  // Admin-set intake area; unset/invalid falls back to the default duct area.
+  const intakeAreaM2 = station?.intake_area_m2 && station.intake_area_m2 > 0 ? station.intake_area_m2 : AWH_DUCT_AREA_M2;
   const availableFields = useMemo(() => station?.metadata.available_fields ?? [], [station]);
   const error = stationsQuery.error
     ? stationsQuery.error.message
@@ -214,14 +217,14 @@ export default function StationDetails() {
   // rather than overlaid on shared axes, so each parameter reads at its own scale.
   const chartDataByParam: { field: string; data: ChartDataPoint[] }[] = useMemo(
     () =>
-      buildChartSeries(readings, startDate, endDate, selectedParameters).map(({ field, data }) => ({
+      buildChartSeries(readings, startDate, endDate, selectedParameters, intakeAreaM2).map(({ field, data }) => ({
         field,
         data: data.map(p => ({
           ...p,
           value: typeof p.value === 'number' ? convertFieldValue(field, p.value, volumeUnit) : p.value,
         })),
       })),
-    [startDate, endDate, selectedParameters, readings, volumeUnit]
+    [startDate, endDate, selectedParameters, readings, volumeUnit, intakeAreaM2]
   );
 
   // Model-flagged unusual-activity periods (batch export, see lib/anomalies.ts)

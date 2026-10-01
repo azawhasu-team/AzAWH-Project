@@ -41,6 +41,7 @@ import { convertLiters, convertSpecificEnergy, UNIT_LABEL, type VolumeUnit } fro
 export default function StationDataDownload({ station }: { station: StationInfo }) {
   const availableFields = station.metadata.available_fields;
   const stationName = station.station_name;
+  const intakeAreaM2 = station.intake_area_m2 && station.intake_area_m2 > 0 ? station.intake_area_m2 : AWH_DUCT_AREA_M2;
 
   const [startDate, setStartDate] = useState<Date | null>(
     station.metadata.last_reading
@@ -248,7 +249,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                     const dtMs = prevTimestamp ? new Date(r.timestamp).getTime() - new Date(prevTimestamp).getTime() : 30000;
                     const dtS = Math.min(dtMs / 1000, 120);
                     const velMps = velocityToMps(vel, r.unit);
-                    const intakeG = absHIn * velMps * AWH_DUCT_AREA_M2 * dtS;
+                    const intakeG = absHIn * velMps * intakeAreaM2 * dtS;
                     row.harvesting_efficiency = intakeG > 0
                       ? Math.round(Math.min((incWG / intakeG) * 100, 100) * 10000) / 10000
                       : 0;

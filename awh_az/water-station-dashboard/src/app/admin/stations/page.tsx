@@ -47,6 +47,7 @@ interface EditState {
   description: string;
   hidden: boolean;
   expected_production_g_per_min: string;
+  intake_area_m2: string;
 }
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
@@ -56,6 +57,7 @@ interface NewStationForm {
   display_name: string;
   description: string;
   expected_production_g_per_min: string;
+  intake_area_m2: string;
 }
 
 const EMPTY_NEW_STATION: NewStationForm = {
@@ -63,6 +65,7 @@ const EMPTY_NEW_STATION: NewStationForm = {
   display_name: '',
   description: '',
   expected_production_g_per_min: '',
+  intake_area_m2: '',
 };
 
 export default function AdminStationsPage() {
@@ -95,6 +98,7 @@ export default function AdminStationsPage() {
         hidden: Boolean(s.hidden),
         expected_production_g_per_min:
           s.expected_production_g_per_min != null ? String(s.expected_production_g_per_min) : '',
+        intake_area_m2: s.intake_area_m2 != null ? String(s.intake_area_m2) : '',
       };
     }
     setEdits(initialEdits);
@@ -151,6 +155,7 @@ export default function AdminStationsPage() {
           expected_production_g_per_min: newStation.expected_production_g_per_min.trim()
             ? Number(newStation.expected_production_g_per_min)
             : null,
+          intake_area_m2: newStation.intake_area_m2.trim() ? Number(newStation.intake_area_m2) : null,
         }),
       });
       const data = await res.json();
@@ -206,6 +211,7 @@ export default function AdminStationsPage() {
           expected_production_g_per_min: edit.expected_production_g_per_min.trim()
             ? Number(edit.expected_production_g_per_min)
             : null,
+          intake_area_m2: edit.intake_area_m2.trim() ? Number(edit.intake_area_m2) : null,
         }),
       });
       if (!res.ok) throw new Error(`Save failed (${res.status})`);
@@ -221,6 +227,7 @@ export default function AdminStationsPage() {
                 expected_production_g_per_min: edit.expected_production_g_per_min.trim()
                   ? Number(edit.expected_production_g_per_min)
                   : null,
+                intake_area_m2: edit.intake_area_m2.trim() ? Number(edit.intake_area_m2) : null,
               }
             : s
         )
@@ -420,6 +427,17 @@ export default function AdminStationsPage() {
                     inputProps={{ step: 'any', min: 0 }}
                     fullWidth
                   />
+                  <TextField
+                    label="Intake area (m²)"
+                    placeholder="0.18"
+                    helperText="Cross-section of the air intake. Sets how much air (and moisture) is available to the station, so it scales harvesting efficiency. Leave blank for the default (0.18 m²)."
+                    value={edit.intake_area_m2}
+                    onChange={(e) => updateEdit(station.station_name, { intake_area_m2: e.target.value })}
+                    size="small"
+                    type="number"
+                    inputProps={{ step: 'any', min: 0 }}
+                    fullWidth
+                  />
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <FormControlLabel
                       control={
@@ -534,6 +552,17 @@ export default function AdminStationsPage() {
               onChange={(e) =>
                 setNewStation((prev) => ({ ...prev, expected_production_g_per_min: e.target.value }))
               }
+              size="small"
+              type="number"
+              inputProps={{ step: 'any', min: 0 }}
+              fullWidth
+              disabled={addSaving}
+            />
+            <TextField
+              label="Intake area (m², optional)"
+              helperText="Air-intake cross-section used for harvesting efficiency. Blank = default 0.18 m²."
+              value={newStation.intake_area_m2}
+              onChange={(e) => setNewStation((prev) => ({ ...prev, intake_area_m2: e.target.value }))}
               size="small"
               type="number"
               inputProps={{ step: 'any', min: 0 }}

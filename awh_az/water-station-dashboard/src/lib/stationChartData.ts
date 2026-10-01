@@ -50,7 +50,8 @@ export function buildChartSeries(
   readings: StationReading[],
   startDate: Date | null,
   endDate: Date | null,
-  selectedParameters: string[]
+  selectedParameters: string[],
+  intakeAreaM2: number = AWH_DUCT_AREA_M2
 ): { field: string; data: ChartDataPoint[] }[] {
   if (!startDate || !endDate || selectedParameters.length === 0 || readings.length === 0) return [];
 
@@ -121,7 +122,7 @@ export function buildChartSeries(
   });
 
   // Harvesting efficiency (%) per reading
-  // Formula: incremental_water_g / (abs_humidity × velocity_mps × DUCT_AREA × Δt_s) × 100
+  // Formula: incremental_water_g / (abs_humidity × velocity_mps × intake area × Δt_s) × 100
   const effMap = new Map<string, number>();
   filteredReadings.forEach((r, i) => {
     const absH = typeof r.temperature === 'number' && typeof r.humidity === 'number'
@@ -135,7 +136,7 @@ export function buildChartSeries(
         : 30000;
       const dtS = Math.min(dtMs / 1000, 120); // cap at 2 min to avoid gaps inflating result
       const velMps = velocityToMps(vel, r.unit);
-      const intakeWaterG = absH * velMps * AWH_DUCT_AREA_M2 * dtS;
+      const intakeWaterG = absH * velMps * intakeAreaM2 * dtS;
       const eff = intakeWaterG > 0 ? Math.min((incW / intakeWaterG) * 100, 100) : 0;
       effMap.set(r.timestamp, Math.round(eff * 10000) / 10000);
     } else {
