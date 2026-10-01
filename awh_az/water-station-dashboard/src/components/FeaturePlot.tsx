@@ -21,7 +21,7 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import { FeatureType, ChartDataPoint } from '@/types';
 import { formatPhoenixTime, formatPhoenixFullDateTime, phoenixDateKey } from '@/lib/timezone';
 import { downsampleMinMax } from '@/lib/downsample';
-import { detectFlatPower } from '@/lib/powerStatus';
+import { detectPowerStatus } from '@/lib/powerStatus';
 import { snapBandToDates, type AnomalyBand } from '@/lib/anomalies';
 
 export interface ChartZoomRange {
@@ -116,7 +116,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
 
   // Classified on the full series so zooming never changes what counts as flat.
   const flatPower = React.useMemo(
-    () => (powerStatus && !isBar ? detectFlatPower(data) : null),
+    () => (powerStatus && !isBar ? detectPowerStatus(data) : null),
     [powerStatus, isBar, data]
   );
 
@@ -125,9 +125,9 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
   // the colors meet without a visible break.
   const plotData = React.useMemo(() => {
     if (!flatPower) return downsampled;
-    const isFlat = (i: number) => flatPower.flatDates.has(downsampled[i].date);
+    const isFlat = (i: number) => flatPower.offDates.has(downsampled[i].date);
     return downsampled.map((d, i) => {
-      if (d.value == null) return { ...d, runningValue: null, flatValue: null };
+      if (d.value == null) return { ...d, runningValue: null, flatValue: null, jumpValue: null };
       const flat = isFlat(i);
       const touchesOther =
         (i > 0 && downsampled[i - 1].value != null && isFlat(i - 1) !== flat) ||
@@ -136,6 +136,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
         ...d,
         runningValue: !flat || touchesOther ? d.value : null,
         flatValue: flat || touchesOther ? d.value : null,
+        jumpValue: flatPower.jumpDates.has(d.date) ? d.value : null,
       };
     });
   }, [downsampled, flatPower]);
@@ -288,18 +289,32 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
       </Box>
 
       {flatPower && (
-        flatPower.currentRun ? (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            Power has not changed since {formatPhoenixFullDateTime(new Date(flatPower.currentRun.startMs))}
-            {' '}({formatDuration(flatPower.currentRun.endMs - flatPower.currentRun.startMs)}) — the station may be off
-            or the power meter stuck.
-          </Alert>
-        ) : flatPower.runs.length > 0 ? (
-          <Alert severity="success" sx={{ mb: 2 }}>
-            Power is changing normally (running). {flatPower.runs.length} flat stretch
-            {flatPower.runs.length === 1 ? '' : 'es'} earlier in this range, shown in red.
-          </Alert>
-        ) : null
+        <>
+          {flatPower.currentStretch ? (
+            <Alert severity="error" sx={{ mb: 1 }}>
+              {flatPower.currentStretch.atZero
+                ? `Power has read 0 W since ${formatPhoenixFullDateTime(new Date(flatPower.currentStretch.startMs))}`
+                : `Power has not changed since ${formatPhoenixFullDateTime(new Date(flatPower.currentStretch.startMs))}`}
+              {' '}({formatDuration(flatPower.currentStretch.endMs - flatPower.currentStretch.startMs)}) — the station may be
+              off or the power meter stuck.
+            </Alert>
+          ) : flatPower.stretches.length > 0 ? (
+            <Alert severity="success" sx={{ mb: 1 }}>
+              Power is running. {flatPower.stretches.length} off/flat stretch
+              {flatPower.stretches.length === 1 ? '' : 'es'} earlier in this range, shown in red.
+            </Alert>
+          ) : null}
+          {flatPower.jumps.length > 0 && (() => {
+            const last = flatPower.jumps[flatPower.jumps.length - 1];
+            return (
+              <Alert severity="warning" sx={{ mb: 1 }}>
+                {flatPower.jumps.length} sudden power change{flatPower.jumps.length === 1 ? '' : 's'} in this range
+                (amber dots). Latest: {last.from.toFixed(0)} W → {last.to.toFixed(0)} W at{' '}
+                {formatPhoenixFullDateTime(new Date(last.ms))}.
+              </Alert>
+            );
+          })()}
+        </>
       )}
 
       {data.length === 0 ? (
@@ -432,7 +447,18 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
                     fillOpacity={0.12}
                     dot={false}
                     activeDot={{ r: 5, fill: '#d32f2f', stroke: 'white', strokeWidth: 2 }}
-                    name={`${param1Name} (no change)`}
+                    name={`${param1Name} (off / no change)`}
+                  />
+                  <Area
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="jumpValue"
+                    stroke="none"
+                    fill="none"
+                    dot={{ r: 5, fill: '#ed6c02', stroke: 'white', strokeWidth: 2 }}
+                    activeDot={{ r: 6, fill: '#ed6c02', stroke: 'white', strokeWidth: 2 }}
+                    legendType="none"
+                    name={`${param1Name} (sudden change)`}
                   />
                 </>
               ) : isBar ? (
