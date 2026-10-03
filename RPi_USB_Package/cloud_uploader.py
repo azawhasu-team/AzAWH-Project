@@ -8,7 +8,7 @@ How it works
     so a network outage can never stall CSV logging or the UI.
   * A background thread sends the oldest queued reading first, one at a time. Success
     deletes it; a network error or HTTP 5xx keeps it and retries with backoff
-    (5 s doubling to 5 min); a permanent HTTP 4xx drops it (it would never succeed).
+    (5 s doubling to 1 min); a permanent HTTP 4xx drops it (it would never succeed).
   * Every reading gets a stable reading_id, so a retry after an ambiguous timeout
     cannot create a duplicate (the Cloud Function uses it as the document id).
   * The queue is on disk, so readings survive a reboot or power loss.
@@ -45,7 +45,7 @@ import requests
 
 LIVE_MAX_AGE_SEC = 120
 BACKOFF_START_SEC = 5
-BACKOFF_MAX_SEC = 300
+BACKOFF_MAX_SEC = 60   # one retry a minute is no heavier than normal uploads; keeps post-outage recovery under ~1-2 min
 REQUEST_TIMEOUT_SEC = 10
 MAX_QUEUE_ROWS = 100_000          # ~69 days at one reading a minute
 RETRYABLE_4XX = {401, 403, 408, 429}   # 401/403: bad/rotated station key, fixable by an operator
@@ -270,7 +270,9 @@ class CloudUploader:
             self.last_success_ts = self._time()
             self.last_error = None
             self.queue.delete(row["id"])
-            log.debug("uploaded reading %s", row["reading_id"])
+            # INFO (not DEBUG): this is the operator's "it's working" signal, replacing the old
+            # "[Cloud Upload] 200" console line. ~1 line/minute; the rotating log keeps weeks of it.
+            log.info("[Cloud Upload] %s OK - reading sent (%d still queued)", status, max(len(self.queue), 0))
             return "sent"
         if 400 <= status < 500 and status not in RETRYABLE_4XX:
             log.error("cloud rejected a reading permanently (HTTP %s); dropping it: %s",
