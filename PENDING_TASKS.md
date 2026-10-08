@@ -148,8 +148,8 @@ Per CLAUDE.md Section 9.
 - Week 2: Benchmark dataset (labeled anomalies, train/val/test split) — ✅ built, synthetic fault injection (`research_extension/phase2_models/build_benchmark_dataset.py`)
 - Week 3–4: LSTM + Isolation Forest models — ✅ built, 14 rounds of iteration, current best LSTM F1=0.415 (see below)
 - Week 4–5: LangGraph multi-agent system — ✅ built (`research_extension/phase3_agents/`), see Round 15 below
-- Week 6–7: Evidently AI + Airflow MLOps pipeline — not started
-- Week 8: Kubernetes + Grafana deployment — not started
+- Week 6–7: Evidently AI + Airflow MLOps pipeline — not pursued (decision 2026-10-07, see Round 16)
+- Week 8: Kubernetes + Grafana deployment — not pursued (decision 2026-10-07, see Round 16)
 
 ### Phase 2 model status (updated 2026-07-15, second pass)
 
@@ -876,3 +876,16 @@ now models that lean on the abundant normal data rather than the sparse fault in
 per-feature autoencoders/reconstruction-error scoring (trained only on normal data, no fault-instance
 count problem at all), or the still-untried feature-selection idea from round 8 applied ahead of the
 classifier.
+
+### Round 16 (2026-10-07) — Phase 3 first run, missing-data confound, wrap-up
+
+- **Phase 3 first end-to-end run (2026-10-06)** on local Ollama (`qwen2.5:7b`); `AWH_LLM_PROVIDER=claude`
+  remains an option but was never run. Pipeline works; the 7B reports are weak (wrong unit, invented
+  causes) and unrated by a human.
+- **Missing-data confound found** (`phase2_models/analyze_missing_data_effect.py`): 32% of test windows
+  have real pre-existing missing data (station 5 temperature/humidity outage Apr 29-May 5, 22% of the test
+  set; station 9 has no power meter). Detectors flag these (80% vs 12% on clean normals). Attribution F1
+  on clean windows is 0.499 for both LSTM and Isolation Forest, vs 0.251/0.240 on the missing-data subset
+  (full test: 0.415/0.356). Fix not applied (relabel real outages as their own class).
+- **Decision:** wrap up at Phase 3; Phases 4-5 not pursued. Findings in `research_extension/FINDINGS.md`;
+  state tagged `research-extension-v1`.

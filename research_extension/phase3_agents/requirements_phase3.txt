@@ -3,6 +3,7 @@
 # (Reuses research_extension/phase1_streaming/venv_phase1 — no separate venv needed.)
 
 langgraph==1.2.10
+# Only needed when AWH_LLM_PROVIDER=claude (default is local Ollama, no extra package):
 anthropic==0.120.2
 
 # Reuses phase2_models' own dependencies (pandas, joblib, scikit-learn,

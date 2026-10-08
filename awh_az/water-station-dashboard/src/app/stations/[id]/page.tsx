@@ -26,7 +26,7 @@ import {
 } from '@mui/material';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-import { ArrowBack, Circle as CircleIcon, CalendarMonth, Tune } from '@mui/icons-material';
+import { ArrowBack, Circle as CircleIcon, CalendarMonth, Tune, ViewAgenda, GridView } from '@mui/icons-material';
 import { format } from 'date-fns';
 import FeaturePlot, { type ChartZoomRange } from '@/components/FeaturePlot';
 import { type StationInfo, type StationReading, type HourlyDataRow } from '@/lib/api-client';
@@ -85,6 +85,17 @@ export default function StationDetails() {
   const [volumeUnit, setVolumeUnit] = useState<VolumeUnit>('L');
   const [selectedUnit, setSelectedUnit] = useState<string>('');
   const [selectedParameters, setSelectedParameters] = useState<string[]>([]);
+  // 'stack' = one chart per row; 'grid' = two charts per row on wide screens.
+  const [chartLayout, setChartLayout] = useState<'stack' | 'grid'>('stack');
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('stationChartLayout') === 'grid') setChartLayout('grid');
+    } catch {}
+  }, []);
+  const changeChartLayout = (v: 'stack' | 'grid') => {
+    setChartLayout(v);
+    try { localStorage.setItem('stationChartLayout', v); } catch {}
+  };
   const [chartZoom, setChartZoom] = useState<ChartZoomRange | null>(null);
 
   // Dialog states
@@ -95,6 +106,11 @@ export default function StationDetails() {
   // Live status: most recent reading, polled independently of the date-range chart data
   const liveQuery = useLiveReading(stationName);
   const liveReading = liveQuery.data ?? null;
+  // Newest timestamp seen from either source: the 30s live poll (Postgres) or
+  // the station list's last_reading (Firestore, which can be ahead of Postgres
+  // by the ingestion interval). Never moves backwards, so a lagging or cached
+  // poll response can't make a station look like it stopped reporting.
+  const newestSeenMs = React.useRef<{ station: string | null; ms: number }>({ station: null, ms: 0 });
   const liveReadingError = liveQuery.error ? liveQuery.error.message : null;
   const [liveNowTick, setLiveNowTick] = useState(() => Date.now());
 
@@ -310,8 +326,18 @@ export default function StationDetails() {
 
   // Freshness of the live reading — show an early Delayed warning after two
   // minutes, but allow a short upload/network interruption before going Offline.
-  const liveAgeSec = liveReading
-    ? Math.max(0, Math.floor((liveNowTick - new Date(liveReading.timestamp).getTime()) / 1000))
+  const candidateMs = [liveReading?.timestamp, station?.metadata.last_reading]
+    .map(t => (t ? new Date(t).getTime() : NaN))
+    .filter(ms => Number.isFinite(ms));
+  if (newestSeenMs.current.station !== (station?.station_name ?? null)) {
+    newestSeenMs.current = { station: station?.station_name ?? null, ms: 0 };
+  }
+  if (candidateMs.length > 0) {
+    newestSeenMs.current.ms = Math.max(newestSeenMs.current.ms, ...candidateMs);
+  }
+  const lastReadingMs = newestSeenMs.current.ms || null;
+  const liveAgeSec = lastReadingMs !== null
+    ? Math.max(0, Math.floor((liveNowTick - lastReadingMs) / 1000))
     : null;
   const liveAgeLabel = liveAgeSec === null
     ? null
@@ -513,7 +539,7 @@ export default function StationDetails() {
               <Box>
                 <Typography variant="body2" sx={{ opacity: 0.8 }}>Last Updated</Typography>
                 <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                  {station.metadata.last_reading ? formatPhoenixMonthDayTime(new Date(station.metadata.last_reading)) : 'N/A'}
+                  {lastReadingMs !== null ? formatPhoenixMonthDayTime(new Date(lastReadingMs)) : 'N/A'}
                 </Typography>
               </Box>
             </Box>
@@ -580,6 +606,18 @@ export default function StationDetails() {
             <ToggleButton value="L">L</ToggleButton>
             <ToggleButton value="gal">gal</ToggleButton>
             <ToggleButton value="acre-ft">ac-ft</ToggleButton>
+          </ToggleButtonGroup>
+
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={chartLayout}
+            onChange={(_, v: 'stack' | 'grid' | null) => v && changeChartLayout(v)}
+            aria-label="Chart layout"
+            sx={{ mb: 2, ml: 1.5, display: { xs: 'none', lg: 'inline-flex' } }}
+          >
+            <ToggleButton value="stack" aria-label="One chart per row"><ViewAgenda fontSize="small" sx={{ mr: 0.75 }} />Stacked</ToggleButton>
+            <ToggleButton value="grid" aria-label="Two charts per row"><GridView fontSize="small" sx={{ mr: 0.75 }} />Side by side</ToggleButton>
           </ToggleButtonGroup>
 
           {startDate && endDate && (
@@ -891,6 +929,14 @@ export default function StationDetails() {
         </Box>
       )}
 
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: chartLayout === 'grid' ? 'repeat(2, minmax(0, 1fr))' : 'minmax(0, 1fr)' },
+          columnGap: 2,
+          '& > *': { minWidth: 0 },
+        }}
+      >
       {!readingsLoading && startDate && endDate && chartDataByParam.map(({ field, data }, i) => (
         <motion.div
           key={field}
@@ -987,7 +1033,7 @@ export default function StationDetails() {
           />
         </motion.div>
       )}
-
+      </Box>
 
       {/* Date Period Dialog */}
       <AnimatePresence>

@@ -18,6 +18,11 @@ export function useStations() {
     queryKey: queryKeys.stations,
     queryFn: () => apiClient.getStations(),
     staleTime: 5 * 60_000,
+    // Each station's `last_reading` feeds the online/offline and "Last
+    // Updated" displays; without a refresh it stayed up to 5 minutes old and
+    // disagreed with the live widget. The API caches /stations for 30s, so
+    // this is cheap. Pauses while the tab is hidden.
+    refetchInterval: 30_000,
   });
 }
 

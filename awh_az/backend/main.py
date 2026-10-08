@@ -666,7 +666,13 @@ async def get_station_readings(
         metadata=metadata,
     )
 
-    cache.set(cache_key, response.dict(), ttl=180)
+    # Open-ended "latest N" requests (no date bounds) are what the dashboard's
+    # live-status widget polls every 30s. A 180s TTL there made it keep seeing
+    # the same newest reading for up to 3 minutes, so its "last reading Xs ago"
+    # age climbed past the Live threshold and then snapped back — flapping
+    # Live/Delayed. Keep those fresh; bounded historical ranges don't change.
+    is_latest_query = start_date is None and end_date is None
+    cache.set(cache_key, response.dict(), ttl=10 if is_latest_query else 180)
     return response
 
 
@@ -993,8 +999,8 @@ def _compute_hourly_aggregation_sync(
     # delta lands as a single lump in the reconnection hour rather than
     # being smoothed across the gap (there's no way to know when within the
     # gap it happened), but it is no longer silently discarded.
-    WEIGHT_NOISE_FLOOR_G = 15  # see the water_produced_g note below for why
-    # The rate-based check (15g/30s == 30g/min) applies to every step while
+    WEIGHT_NOISE_FLOOR_G = 25  # see the water_produced_g note below for why
+    # The rate-based check (25g/30s == 50g/min) applies to every step while
     # the station is reporting normally, no matter the exact gap — a delayed
     # reading 5 or 20 minutes later is still "running," just slow to check
     # in, and jitter shouldn't get a free pass just because the gap wasn't
@@ -1002,10 +1008,10 @@ def _compute_hourly_aggregation_sync(
     # for hours/days) does this stop applying — a genuine multi-day
     # accumulation has a tiny per-minute rate despite being unambiguously
     # real water, so scaling the floor there would wrongly zero it out. Past
-    # this cutoff the floor reverts to the flat 15g (see the note at the
+    # this cutoff the floor reverts to the flat 25g (see the note at the
     # water delta check below).
     WEIGHT_NOISE_RATE_APPLIES_UNDER_S = 3600.0  # 1 hour: "running" vs. "stale"
-    WEIGHT_NOISE_RATE_WINDOW_S = 30.0  # the "30s" in "15g/30s"
+    WEIGHT_NOISE_RATE_WINDOW_S = 30.0  # the "30s" in "25g/30s"
     WEIGHT_NOISE_RATE_G_PER_S = WEIGHT_NOISE_FLOOR_G / WEIGHT_NOISE_RATE_WINDOW_S
     ENERGY_WH_HEURISTIC_THRESHOLD_KWH = 20  # see the energy_consumed_kWh note below
     # A real hour of operation draws on the order of 1kWh (these stations run
@@ -1014,6 +1020,15 @@ def _compute_hourly_aggregation_sync(
     # excluded rather than plotted as if it were a real reading — same
     # reasoning as the weight noise floor above, applied to energy instead.
     ENERGY_NOISE_FLOOR_KWH = 0.1
+    WATER_MIN_FRACTION_OF_EXPECTED = 0.10  # hours below this share of expected output are excluded
+    # A "jump" is a sharp rise in the cumulative energy register right after
+    # it sat flat: that single step is excluded, and energy after it counts
+    # normally. Keep in sync with lib/energyJumps.ts in the dashboard.
+    ENERGY_JUMP_FLAT_MIN_S = 10 * 60
+    ENERGY_JUMP_MAX_KW = 3.0
+    # Floor so stations still uploading raw Wh (KNOWN_ISSUES.md #7), where an
+    # ordinary step is tens of units, aren't misread as jumps.
+    ENERGY_JUMP_MIN_KWH = 0.5
 
     # Station metadata (Firestore is the source of truth for it regardless of
     # whether readings came from Postgres or Firestore). Fetched before the
@@ -1056,6 +1071,7 @@ def _compute_hourly_aggregation_sync(
     last_valid_weight_ts: Optional[str] = None
     last_valid_energy: Optional[float] = None
     last_valid_energy_ts: Optional[str] = None
+    energy_flat_since_ts: Optional[str] = None
 
     # Upper-bound counterpart to WEIGHT_NOISE_FLOOR_G above: a positive delta
     # implying a sustained rate faster than this is more likely a balance
@@ -1077,18 +1093,18 @@ def _compute_hourly_aggregation_sync(
 
         if cur_r.get("_after_exclusion"):
             last_valid_weight = last_valid_weight_ts = None
-            last_valid_energy = last_valid_energy_ts = None
+            last_valid_energy = last_valid_energy_ts = energy_flat_since_ts = None
 
         # Water: while the station is reporting normally (gap under
         # WEIGHT_NOISE_RATE_APPLIES_UNDER_S), the noise floor is rate-scaled
-        # (15g/30s) on every step, however long that particular gap happens
+        # (25g/30s) on every step, however long that particular gap happens
         # to be — a real small drip shouldn't get zeroed just for landing on
         # a step that wasn't exactly 60s. Once the gap is stale-for-real (an
         # actual outage), a real jump is real regardless of how long it took
         # to accumulate — scaling the floor by elapsed time there would do
         # the opposite of what we want, since a genuine multi-day
         # accumulation has a tiny per-minute rate despite being unambiguously
-        # real water — so the floor reverts to the flat 15g. The upper-bound
+        # real water — so the floor reverts to the flat 25g. The upper-bound
         # rate cap always scales with elapsed time regardless — see
         # WATER_RATE_CAP_G_PER_S above.
         cur_w = cur_r.get("weight")
@@ -1140,8 +1156,25 @@ def _compute_hourly_aggregation_sync(
                     )
                 except Exception:
                     elapsed_s = 60.0
-                energy_raw_delta_by_hour[hour_key] += max(cur_e - last_valid_energy, 0)
-                energy_span_hours_by_hour[hour_key] += elapsed_s / 3600.0
+                e_delta = max(cur_e - last_valid_energy, 0)
+                try:
+                    flat_s = (
+                        datetime.fromisoformat(last_valid_energy_ts.replace("Z", "+00:00"))
+                        - datetime.fromisoformat((energy_flat_since_ts or last_valid_energy_ts).replace("Z", "+00:00"))
+                    ).total_seconds()
+                except Exception:
+                    flat_s = 0.0
+                is_energy_jump = (
+                    e_delta > max(ENERGY_JUMP_MAX_KW * elapsed_s / 3600.0, ENERGY_JUMP_MIN_KWH)
+                    and flat_s >= ENERGY_JUMP_FLAT_MIN_S
+                )
+                if not is_energy_jump:
+                    energy_raw_delta_by_hour[hour_key] += e_delta
+                    energy_span_hours_by_hour[hour_key] += elapsed_s / 3600.0
+                if cur_e != last_valid_energy:
+                    energy_flat_since_ts = cur_ts
+            else:
+                energy_flat_since_ts = cur_ts
             last_valid_energy = cur_e
             last_valid_energy_ts = cur_ts
 
@@ -1262,11 +1295,19 @@ def _compute_hourly_aggregation_sync(
         # downstream calculation and graph for this hour, not just the raw
         # water chart. No expected rate set → skip this entirely, unchanged
         # from prior behavior.
+        water_hour_excluded = False
         if expected_g_per_min is not None and row["water_produced_g"] is not None:
             expected_g_per_hour = expected_g_per_min * 60.0
             max_plausible_g = 3 * expected_g_per_hour
             if row["water_produced_g"] > max_plausible_g:
                 row["water_produced_g"] = round(max_plausible_g, 4)
+            # Floor counterpart: an hour producing under 10% of the expected
+            # rate isn't meaningfully running (idle/off/stalled), so it's
+            # excluded (None) rather than reported as a near-zero production
+            # hour that drags down averages and efficiency.
+            elif row["water_produced_g"] < WATER_MIN_FRACTION_OF_EXPECTED * expected_g_per_hour:
+                row["water_produced_g"] = None
+                water_hour_excluded = True
 
         # Energy consumed per hour: same bridging, plus the Wh-vs-kWh
         # plausibility threshold now scales with the elapsed time the
@@ -1312,6 +1353,10 @@ def _compute_hourly_aggregation_sync(
             row["harvesting_efficiency_pct_hourly"] = round(min((captured_g / intake_available_g) * 100.0, 100.0), 4)
         else:
             row["harvesting_efficiency_pct_hourly"] = 0.0
+        if water_hour_excluded:
+            # Same hour excluded from efficiency, not reported as 0%.
+            row["water_captured_g_hourly"] = None
+            row["harvesting_efficiency_pct_hourly"] = None
 
         hourly_rows.append(row)
 

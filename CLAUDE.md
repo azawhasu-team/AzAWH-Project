@@ -62,6 +62,8 @@ Sensor Intelligence system** — a multi-agent MLOps framework that:
   and regulatory stakeholders using RAG-grounded LLMs
 
 ### The Three Research Questions
+> **Status 2026-10-07:** the research extension was wrapped up at Phases 1–3 as a personal project, and Phases 4–5 are not pursued. RQ1's target was not reached (best attribution F1 0.415; 0.499 on clean windows). RQ2 and RQ3 were not tested. See `research_extension/FINDINGS.md`; full state tagged `research-extension-v1`.
+
 - **RQ1 — Attribution accuracy:** Can a LangGraph-orchestrated multi-agent system
   (LSTM + Isolation Forest) achieve F1 > 0.80 on anomaly attribution where
   rule-based baselines achieve F1 < 0.65?
@@ -394,15 +396,15 @@ the demo entry point.
   - `ThresholdBreachAgent` — checks raw readings against **placeholder operational sanity bounds**, not real EPA data (AWH telemetry doesn't map to standard EPA drinking-water limits — explicit decision 2026-07-31; swap in real values if this needs to answer to an actual regulatory framework)
   - `IncidentReportAgent` — RAG-grounded Claude (`claude-opus-5`) call; retrieval is keyword overlap over `guides/*.md` (not a vector DB — the corpus is ~3K lines, keyword ranking is sufficient)
   - `StakeholderEscalationAgent` — decides severity + routing and **logs the decision only** — no real notification channel wired up (explicit decision 2026-07-31)
-- Requires `ANTHROPIC_API_KEY` (or `ant auth login`) to actually run the `IncidentReportAgent` LLM call — every other node runs with no external credentials.
+- `IncidentReportAgent` runs on a local Ollama model by default (`AWH_LLM_PROVIDER=ollama`, `OLLAMA_MODEL`, default `qwen2.5:7b`; no credentials, no cost). Set `AWH_LLM_PROVIDER=claude` to use the Claude API instead (needs `ANTHROPIC_API_KEY` or `ant auth login`). Ollama output is rejected in favour of a plain template if it cites a number not in the prompt. First end-to-end run: 2026-10-06.
 
-### Phase 4 (Weeks 6–7) — Drift-Adaptive MLOps
+### Phase 4 (Weeks 6–7) — Drift-Adaptive MLOps — NOT PURSUED (2026-10-07; no real labeled drift data)
 - **Evidently AI** — data drift and model performance monitoring
 - **Apache Airflow** — automated retraining DAG
 - **GitHub Actions** — CI/CD with evaluation gates
 - Target: recover to within 5% of pre-drift F1 within 48 hours of drift detection
 
-### Phase 5 (Week 8) — Deployment and Evaluation
+### Phase 5 (Week 8) — Deployment and Evaluation — NOT PURSUED (2026-10-07)
 - **FastAPI** — extended serving for model predictions and agent outputs
 - **Docker + Kubernetes** — full container orchestration
 - **Grafana + Prometheus** — observability and alerting
@@ -428,9 +430,9 @@ the demo entry point.
 | Kafka + Spark streaming layer (`research_extension/phase1_streaming/`) | ✅ Built (Week 1–2) |
 | Benchmark dataset (labeled, train/val/test split) | ✅ Built — 8 real stations, scoped to temperature/humidity/weight/power (`research_extension/phase2_models/`) |
 | LSTM + Isolation Forest + classifier + two-stage models | ✅ Built — LSTM best, attribution F1=0.415, well below RQ1's 0.80 target (see PENDING_TASKS.md Part C for the full 14-round history) |
-| LangGraph multi-agent system (`research_extension/phase3_agents/`) | ✅ Built — SensorDriftAgent, ThresholdBreachAgent (placeholder thresholds, not real EPA data), IncidentReportAgent (RAG-grounded Claude call), StakeholderEscalationAgent (simulated routing, no real notifications sent). Needs `ANTHROPIC_API_KEY` to actually run the LLM step. |
-| Evidently + Airflow MLOps pipeline | 🔲 Week 6–7 |
-| Kubernetes + Grafana deployment | 🔲 Week 8 |
+| LangGraph multi-agent system (`research_extension/phase3_agents/`) | ✅ Built — SensorDriftAgent, ThresholdBreachAgent (placeholder thresholds, not real EPA data), IncidentReportAgent (RAG-grounded LLM call, local Ollama by default or Claude), StakeholderEscalationAgent (simulated routing, no real notifications sent). Run end to end on Ollama 2026-10-06. |
+| Evidently + Airflow MLOps pipeline | ⏹ Not pursued (2026-10-07) |
+| Kubernetes + Grafana deployment | ⏹ Not pursued (2026-10-07) |
 
 ---
 

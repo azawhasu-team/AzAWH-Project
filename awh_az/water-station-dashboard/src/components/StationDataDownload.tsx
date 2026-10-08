@@ -30,6 +30,7 @@ import {
   fieldUnitFor,
   isVolumeField,
 } from '@/lib/stationFields';
+import { createEnergyJumpTracker } from '@/lib/energyJumps';
 import { convertLiters, convertSpecificEnergy, UNIT_LABEL, type VolumeUnit } from '@/lib/compareMath';
 import { formatPhoenixCsvDateTime } from '@/lib/timezone';
 
@@ -211,7 +212,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
 
                 let accumulatedWaterG = 0;
                 let prevWeight: number | null = null;
-                let prevEnergy: number | null = null;
+                const energyStep = createEnergyJumpTracker();
                 let prevTimestamp: string | null = null;
 
                 const enriched = sorted.map(r => {
@@ -238,9 +239,9 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                   const eRaw = r.energy as number | null | undefined;
                   const e = typeof eRaw === 'number' && eRaw <= ENERGY_SANITY_CEILING_KWH ? eRaw : null;
                   if (e !== null) {
-                    row.energy = e;
-                    row.incremental_energy_kWh = prevEnergy !== null ? Math.round(Math.max(e - prevEnergy, 0) * 1000000) / 1000000 : 0;
-                    prevEnergy = e;
+                    const es = energyStep(e, new Date(r.timestamp).getTime());
+                    row.energy = Math.round(es.adjusted * 1000000) / 1000000;
+                    row.incremental_energy_kWh = Math.round(es.increment * 1000000) / 1000000;
                   } else if (typeof eRaw === 'number') {
                     row.energy = null;
                     row.incremental_energy_kWh = null;

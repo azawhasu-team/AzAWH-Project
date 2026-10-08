@@ -42,7 +42,7 @@ FIREBASE_CREDENTIALS_PATH = os.getenv(
     "FIREBASE_CREDENTIALS_PATH",
     os.path.join(os.path.dirname(__file__), "awh_az/backend/awh-project-460421-52cd6ebf2aa3.json"),
 )
-WEIGHT_NOISE_FLOOR_G = 15  # must match awh_az/backend/main.py's hourly aggregation
+WEIGHT_NOISE_FLOOR_G = 25  # must match awh_az/backend/main.py's hourly aggregation
 BATCH_SIZE = 2000
 
 # Readings in these [start, end) UTC windows are not counted — keep in sync

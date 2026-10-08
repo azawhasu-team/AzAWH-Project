@@ -11,6 +11,7 @@ import {
   computeAbsHumidity,
   velocityToMps,
 } from '@/lib/stationFields';
+import { createEnergyJumpTracker } from '@/lib/energyJumps';
 
 /** Chartable parameters for a station, grouped by category. */
 export function buildParameterCategories(availableFields: string[]): Record<string, string[]> {
@@ -90,8 +91,12 @@ export function buildChartSeries(
   // also wraps at ~65.5 kWh — this per-reading chart can't correct either
   // of those (that needs the Pi-side fix described there); it's accurate
   // for stations already uploading real kWh (e.g. station_testbed_1).
+  // Jumps out of a flat stretch are excluded (see lib/energyJumps.ts): the jump
+  // itself adds nothing, and the cumulative line is shifted down so it carries on
+  // from where it was flat.
   const incEnergyMap = new Map<string, number | null>();
-  let prevE: number | null = null;
+  const cumEnergyMap = new Map<string, number | null>();
+  const energyStep = createEnergyJumpTracker();
   filteredReadings.forEach(r => {
     const raw = typeof r.energy === 'number' ? r.energy : null;
     // A known-corrupt reading (see ENERGY_SANITY_CEILING_KWH) is treated the
@@ -100,10 +105,12 @@ export function buildChartSeries(
     // right after it would show a bogus giant swing.
     const e = raw !== null && raw <= ENERGY_SANITY_CEILING_KWH ? raw : null;
     if (e !== null) {
-      incEnergyMap.set(r.timestamp, prevE !== null ? Math.max(e - prevE, 0) : 0);
-      prevE = e;
+      const s = energyStep(e, new Date(r.timestamp).getTime());
+      incEnergyMap.set(r.timestamp, s.increment);
+      cumEnergyMap.set(r.timestamp, s.adjusted);
     } else {
       incEnergyMap.set(r.timestamp, null);
+      cumEnergyMap.set(r.timestamp, null);
     }
   });
 
@@ -161,8 +168,8 @@ export function buildChartSeries(
     if (field === 'energy') {
       // Already kWh at the source. Values above ENERGY_SANITY_CEILING_KWH are
       // known-corrupt and plotted as a gap rather than a wildly-wrong number.
-      if (typeof reading.energy !== 'number') return null;
-      return reading.energy <= ENERGY_SANITY_CEILING_KWH ? reading.energy : null;
+      // Jumps out of a flat stretch are subtracted out of the cumulative line.
+      return cumEnergyMap.get(reading.timestamp) ?? null;
     }
     // A reading with no value for this field is a gap in the line, not a
     // measurement of zero — plotting it as 0 draws false spikes to the floor.

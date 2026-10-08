@@ -48,6 +48,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
+import DistributionChart from '@/components/DistributionChart';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { format } from 'date-fns';
 import type { StationInfo } from '@/lib/api-client';
@@ -64,6 +65,9 @@ import {
   formatMeasurementValue,
   summarizeWindow,
   buildComparisonPoint,
+  buildDistributionPoint,
+  type ChartType,
+  type DistributionPoint,
   monthKeyOf,
   formatMonthLabel,
   monthRangeISO,
@@ -341,6 +345,10 @@ export default function ComparePage() {
   const [customEnd, setCustomEnd] = useState<Date | null>(null);
   const [measurement, setMeasurement] = useState<Measurement>('total');
   const [unit, setUnit] = useState<VolumeUnit>('L');
+  // Box plot is the default: it shows median, spread, skew and outliers for
+  // every group side by side in the least space, so it stays readable with
+  // many stations or months (violin/histogram get crowded past ~5 groups).
+  const [chartType, setChartType] = useState<ChartType>('box');
 
   // "Compare months" mode: same chart, but the bars are different calendar
   // months of ONE station instead of different stations.
@@ -520,6 +528,25 @@ export default function ComparePage() {
       }),
     [selectedMonths, monthlyHourly, measurement, unit]
   );
+
+  // Full hourly distribution per station / month, for the box, violin and
+  // histogram views.
+  const distributionData: DistributionPoint[] = useMemo(() => {
+    if (compareMode === 'months') {
+      return selectedMonths.map((key) =>
+        buildDistributionPoint(key, formatMonthLabel(key), monthlyHourly[key] || [], measurement, unit)
+      );
+    }
+    return stations.map((station) =>
+      buildDistributionPoint(
+        station.station_name,
+        station.display_name || station.station_name.replace(/^station_/, ''),
+        chartHourly[station.station_name] || [],
+        measurement,
+        unit
+      )
+    );
+  }, [compareMode, selectedMonths, monthlyHourly, stations, chartHourly, measurement, unit]);
 
   const activeChartData = compareMode === 'months' ? monthChartData : chartData;
   const plottedData = activeChartData.filter((d) => d.hasData);
@@ -869,6 +896,20 @@ export default function ComparePage() {
               </FormControl>
             </Box>
 
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={chartType}
+              onChange={(_, v: ChartType | null) => v && setChartType(v)}
+              aria-label="Chart type"
+              sx={rangeToggleSx(activeMeasurement.color)}
+            >
+              <ToggleButton value="box">Box plot</ToggleButton>
+              <ToggleButton value="violin">Violin</ToggleButton>
+              <ToggleButton value="histogram">Histogram</ToggleButton>
+              <ToggleButton value="bar">Mean ± SD</ToggleButton>
+            </ToggleButtonGroup>
+
             {activeMeasurement.usesVolumeUnit && (
               <ToggleButtonGroup
                 exclusive
@@ -898,6 +939,22 @@ export default function ComparePage() {
               <Typography variant="body2" sx={{ color: 'text.disabled' }}>
                 {activeChartLoading ? 'Loading…' : 'No data for the selected range'}
               </Typography>
+            </Box>
+          ) : chartType !== 'bar' ? (
+            <Box sx={{ width: '100%', opacity: activeChartLoading ? 0.5 : 1, transition: 'opacity 200ms ease' }}>
+              <DistributionChart
+                points={distributionData}
+                view={chartType}
+                color={activeMeasurement.color}
+                colorEnd={activeMeasurement.colorEnd}
+                unitLabel={measurement === 'total' ? `${UNIT_LABEL[unit]} per hour` : yUnitLabel}
+                formatValue={(v) => formatMeasurementValue(v, measurement === 'total' ? 'production' : measurement, unit)}
+                gridColor={chartGridColor}
+                axisColor={chartAxisLineColor}
+                tickColor={chartTickColor}
+                markerColor={chartMarkerColor}
+                height={420}
+              />
             </Box>
           ) : (
             <Box sx={{ width: '100%', height: { xs: 320, sm: 380, md: 420 }, opacity: activeChartLoading ? 0.5 : 1, transition: 'opacity 200ms ease' }}>
@@ -1035,6 +1092,17 @@ export default function ComparePage() {
             </Box>
           )}
 
+          {chartType !== 'bar' && (
+            <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 1 }}>
+              Each {compareMode === 'months' ? 'month' : 'station'} is the distribution of its hourly values
+              {measurement === 'total' && ' (total water is a sum, so this shows the hourly production it is made of)'}.
+              {chartType === 'box' && ' Box = middle 50% of hours (Q1–Q3), thick line = median, white dot = mean, whiskers = furthest hour within 1.5×IQR, open circles = outlier hours.'}
+              {chartType === 'violin' && ' Width = how common that value is (each shape scaled to its own peak); black box = Q1–Q3, white dot = median.'}
+              {chartType === 'histogram' && ' Each line shows what share of that group’s hours fall in each value range, on common bins so groups are comparable.'}
+              {' '}Hover for exact numbers. Switch to “Mean ± SD” for the bar chart with absolute humidity.
+            </Typography>
+          )}
+          {chartType === 'bar' && (
           <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 1 }}>
             Right axis: absolute humidity at intake (g/m³) — independent scale, shown for environmental context only.
             {measurement !== 'total' &&
@@ -1042,6 +1110,7 @@ export default function ComparePage() {
             {compareMode === 'stations' && rangePreset !== 'all' && alignMode === 'per-station' && ' Each bar covers that station’s own most recent window — stations that started reporting at different times, or have since gone offline, still compare fairly rather than one being excluded for having no data in a shared calendar range.'}
             {compareMode === 'stations' && rangePreset !== 'all' && alignMode === 'same-time' && ' Every bar covers the identical calendar window, so a station that wasn’t running yet (or has since gone offline) may show no data below — switch to “Per-station” to compare it using its own most recent window instead.'}
           </Typography>
+          )}
 
           {missingCount > 0 && (
             <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 1.5 }}>

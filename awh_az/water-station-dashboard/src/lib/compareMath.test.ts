@@ -98,3 +98,30 @@ describe('formatMeasurementValue', () => {
     expect(formatMeasurementValue(12.3, 'efficiency', 'L')).toBe('12.3%');
   });
 });
+
+import { buildDistributionPoint, quantile, sharedHistogram } from './compareMath';
+
+describe('distribution helpers', () => {
+  const rows = [1, 2, 3, 4, 5, 6, 7, 8, 9, 100].map(
+    (v) => ({ water_produced_L: v }) as unknown as HourlyDataRow
+  );
+
+  it('quantile interpolates linearly', () => {
+    expect(quantile([1, 2, 3, 4], 0.5)).toBe(2.5);
+    expect(quantile([10], 0.9)).toBe(10);
+  });
+
+  it('flags values beyond 1.5×IQR as outliers and keeps whiskers inside the fences', () => {
+    const p = buildDistributionPoint('a', 'A', rows, 'total', 'L');
+    expect(p.n).toBe(10);
+    expect(p.outliers).toEqual([100]);
+    expect(p.whiskerHigh).toBe(9);
+    expect(p.median).toBe(5.5);
+  });
+
+  it('histogram shares sum to 100 per group', () => {
+    const p = buildDistributionPoint('a', 'A', rows, 'total', 'L');
+    const { shares } = sharedHistogram([p], 10);
+    expect(shares[0].reduce((a, b) => a + b, 0)).toBeCloseTo(100);
+  });
+});

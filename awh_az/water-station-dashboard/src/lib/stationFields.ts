@@ -95,12 +95,12 @@ export const AWH_DUCT_AREA_M2 = 0.18;
 // Minimum weight increment (g) counted as real water production, not balance jitter.
 // Some stations' readings wobble ±5-25g between consecutive readings with no real
 // accumulating trend (confirmed on station_testbed_1: true net change over 2 days was
-// ~170g, but summing every positive wobble gave ~9000g — a ~50x overcount). 15g sits
+// ~170g, but summing every positive wobble gave ~9000g — a ~50x overcount). 25g sits
 // well below the real per-step jumps seen on a working station's pump-drain cycles
 // (station_AquaPars@PowerPlant's positive deltas are ~99.7% above this floor) while
 // filtering out most of the noise-only jitter. Keep in sync with the same constant in
 // awh_az/backend/main.py's hourly aggregation.
-export const WEIGHT_NOISE_FLOOR_G = 15;
+export const WEIGHT_NOISE_FLOOR_G = 25;
 
 // Raw `energy` readings above this are known-corrupt, not real cumulative
 // kWh: per guides/KNOWN_ISSUES.md #7, station_testbed_1 has a stretch of

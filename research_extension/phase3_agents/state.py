@@ -37,6 +37,7 @@ class IncidentState(TypedDict, total=False):
     drift: DriftFinding
     threshold: ThresholdFinding
     incident_report: str
+    incident_report_source: str  # which backend wrote it: claude / ollama:<model> / template
     escalation: dict  # {"severity": ..., "route_to": ..., "rationale": ...}
 
     # --- control ---

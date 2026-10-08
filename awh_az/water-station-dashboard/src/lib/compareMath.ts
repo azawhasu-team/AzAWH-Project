@@ -209,3 +209,145 @@ export function monthRangeISO(key: string): { start: string; end: string } {
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
+
+
+// ---------------------------------------------------------------------------
+// Distribution views (box plot / violin / histogram) for the compare page.
+// Same per-hour values and unit conversion as buildComparisonPoint, but the
+// full set of hourly values is kept instead of collapsing to mean +/- std.
+// ---------------------------------------------------------------------------
+
+export type ChartType = 'bar' | 'box' | 'violin' | 'histogram';
+
+export interface DistributionPoint {
+  key: string;
+  displayName: string;
+  n: number;
+  /** Converted to the display unit, ascending. */
+  values: number[];
+  min: number;
+  q1: number;
+  median: number;
+  q3: number;
+  max: number;
+  mean: number;
+  /** Tukey whiskers: furthest values within 1.5 x IQR of the quartiles. */
+  whiskerLow: number;
+  whiskerHigh: number;
+  outliers: number[];
+  hasData: boolean;
+}
+
+// Linear-interpolated quantile of an ascending array (same as numpy default).
+export function quantile(sorted: number[], q: number): number {
+  if (sorted.length === 0) return NaN;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
+export function buildDistributionPoint(
+  key: string,
+  displayName: string,
+  rows: HourlyDataRow[],
+  measurement: Measurement,
+  unit: VolumeUnit
+): DistributionPoint {
+  // 'total' is a sum, so it has no distribution of its own; its distribution
+  // views show the hourly water production the sum is made of.
+  const fieldKey: 'water_produced_L' | 'energy_per_liter_kWh_L' | 'harvesting_efficiency_pct_hourly' =
+    measurement === 'energy'
+      ? 'energy_per_liter_kWh_L'
+      : measurement === 'efficiency'
+      ? 'harvesting_efficiency_pct_hourly'
+      : 'water_produced_L';
+  const effectiveRows = measurement === 'production' ? excludeDowntime(rows) : rows;
+  const isVolume = measurement === 'total' || measurement === 'production';
+  const convert = (v: number) =>
+    isVolume ? convertLiters(v, unit) : measurement === 'energy' ? convertSpecificEnergy(v, unit) : v;
+  const values = effectiveRows
+    .map((r) => r[fieldKey])
+    .filter((v): v is number => v != null)
+    .map(convert)
+    .sort((a, b) => a - b);
+
+  if (values.length === 0) {
+    return {
+      key, displayName, n: 0, values, min: NaN, q1: NaN, median: NaN, q3: NaN, max: NaN,
+      mean: NaN, whiskerLow: NaN, whiskerHigh: NaN, outliers: [], hasData: false,
+    };
+  }
+  const q1 = quantile(values, 0.25);
+  const q3 = quantile(values, 0.75);
+  const iqr = q3 - q1;
+  const lowFence = q1 - 1.5 * iqr;
+  const highFence = q3 + 1.5 * iqr;
+  const inside = values.filter((v) => v >= lowFence && v <= highFence);
+  return {
+    key,
+    displayName,
+    n: values.length,
+    values,
+    min: values[0],
+    q1,
+    median: quantile(values, 0.5),
+    q3,
+    max: values[values.length - 1],
+    mean: values.reduce((a, b) => a + b, 0) / values.length,
+    whiskerLow: inside[0],
+    whiskerHigh: inside[inside.length - 1],
+    outliers: values.filter((v) => v < lowFence || v > highFence),
+    hasData: true,
+  };
+}
+
+/**
+ * Gaussian kernel density of `values` evaluated at each of `grid`. Bandwidth
+ * is Silverman's rule of thumb, floored so a constant series (all-equal
+ * values) still gets a visible bump instead of dividing by zero.
+ */
+export function kernelDensity(values: number[], grid: number[]): number[] {
+  const n = values.length;
+  if (n === 0) return grid.map(() => 0);
+  const mean = values.reduce((a, b) => a + b, 0) / n;
+  const sd = Math.sqrt(values.reduce((a, v) => a + (v - mean) ** 2, 0) / Math.max(n - 1, 1));
+  const iqr = quantile(values, 0.75) - quantile(values, 0.25);
+  const spread = Math.min(sd, iqr / 1.34) || sd;
+  const range = grid.length > 1 ? grid[grid.length - 1] - grid[0] : 1;
+  const h = Math.max(0.9 * spread * n ** -0.2, range * 0.01, 1e-12);
+  return grid.map((x) => {
+    let sum = 0;
+    for (const v of values) {
+      const z = (x - v) / h;
+      sum += Math.exp(-0.5 * z * z);
+    }
+    return sum / (n * h * Math.sqrt(2 * Math.PI));
+  });
+}
+
+/**
+ * Histogram of each point on shared bin edges (so groups are directly
+ * comparable). Counts are normalised to a share of that group's hours, since
+ * groups usually have different numbers of hours.
+ */
+export function sharedHistogram(points: DistributionPoint[], binCount = 20) {
+  const withData = points.filter((p) => p.hasData);
+  if (withData.length === 0) return { edges: [] as number[], shares: [] as number[][] };
+  let lo = Math.min(...withData.map((p) => p.min));
+  let hi = Math.max(...withData.map((p) => p.max));
+  if (hi === lo) {
+    lo -= 0.5;
+    hi += 0.5;
+  }
+  const width = (hi - lo) / binCount;
+  const edges = Array.from({ length: binCount + 1 }, (_, i) => lo + i * width);
+  const shares = points.map((p) => {
+    const counts = new Array<number>(binCount).fill(0);
+    for (const v of p.values) {
+      counts[Math.min(Math.floor((v - lo) / width), binCount - 1)]++;
+    }
+    return counts.map((c) => (p.n > 0 ? (c / p.n) * 100 : 0));
+  });
+  return { edges, shares };
+}

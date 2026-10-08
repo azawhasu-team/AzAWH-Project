@@ -68,7 +68,7 @@ def print_result(label: str, final_state: dict):
     print(f"SensorDriftAgent:      {drift}")
     print(f"ThresholdBreachAgent:  {threshold}")
     if final_state.get("needs_incident"):
-        print(f"\nIncidentReportAgent:\n{final_state.get('incident_report')}")
+        print(f"\nIncidentReportAgent [{final_state.get('incident_report_source')}]:\n{final_state.get('incident_report')}")
         print(f"\nStakeholderEscalationAgent: {final_state.get('escalation')}")
     else:
         print("\n(No anomaly or breach — graph terminated after merge, no report generated.)")
