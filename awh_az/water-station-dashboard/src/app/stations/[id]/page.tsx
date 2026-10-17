@@ -618,6 +618,7 @@ export default function StationDetails() {
             </Typography>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Box
+                aria-hidden="true"
                 sx={{
                   width: 10,
                   height: 10,
@@ -630,7 +631,7 @@ export default function StationDetails() {
                   },
                 }}
               />
-              <Typography variant="body2" sx={{ fontWeight: 600, color: liveStatusColor }}>
+              <Typography variant="body2" role="status" aria-live="polite" sx={{ fontWeight: 600, color: liveStatusColor }}>
                 {liveStatusText}
               </Typography>
 

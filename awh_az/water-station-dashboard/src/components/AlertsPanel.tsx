@@ -25,7 +25,7 @@ function AlertRow({ alert, onJump }: { alert: StationAlert; onJump?: (a: Station
       component="li"
       sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.25, py: 1, borderTop: '1px solid', borderColor: 'divider', listStyle: 'none' }}
     >
-      <Icon sx={{ color, fontSize: 20, mt: '2px', flexShrink: 0 }} aria-label={SEVERITY_STYLE[alert.severity].label} />
+      <Icon sx={{ color, fontSize: 20, mt: '2px', flexShrink: 0 }} titleAccess={SEVERITY_STYLE[alert.severity].label} />
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Typography sx={{ fontWeight: 600, fontSize: '0.9rem' }}>{alert.title}</Typography>
         <Typography variant="body2" color="text.secondary">{alert.detail}</Typography>

@@ -86,14 +86,17 @@ function MetricBar({
   max,
   label,
   color,
+  emptyLabel = '—',
 }: {
   value: number | null;
   max: number;
   label: string;
   color: string;
+  /** Shown instead of a bar when there is no value, e.g. "Off". */
+  emptyLabel?: string;
 }) {
   if (value == null) {
-    return <Typography sx={{ color: 'text.disabled', fontSize: '0.85rem' }}>—</Typography>;
+    return <Typography sx={{ color: 'text.disabled', fontSize: '0.85rem' }}>{emptyLabel}</Typography>;
   }
   const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
   return (
@@ -1221,7 +1224,8 @@ export default function ComparePage() {
                     <MetricBar
                       value={lastEfficiencyPct}
                       max={maxEfficiency}
-                      label={lastEfficiencyPct != null ? `${lastEfficiencyPct.toFixed(1)}%` : offState ? 'Off' : '—'}
+                      label={lastEfficiencyPct != null ? `${lastEfficiencyPct.toFixed(1)}%` : '—'}
+                      emptyLabel={offState ? 'Off' : '—'}
                       color="#ffcb25"
                     />
                   </TableCell>
@@ -1229,7 +1233,8 @@ export default function ComparePage() {
                     <MetricBar
                       value={lastSpecificEnergyKWhPerL}
                       max={maxSpecificEnergy}
-                      label={lastSpecificEnergyKWhPerL != null ? `${lastSpecificEnergyKWhPerL.toFixed(3)} kWh/L` : offState ? 'Off' : '—'}
+                      label={lastSpecificEnergyKWhPerL != null ? `${lastSpecificEnergyKWhPerL.toFixed(3)} kWh/L` : '—'}
+                      emptyLabel={offState ? 'Off' : '—'}
                       color="#5c6bc0"
                     />
                   </TableCell>
@@ -1243,7 +1248,7 @@ export default function ComparePage() {
                       const fresh = freshnessOf(station.metadata.last_reading, nowMs);
                       return (
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, mt: 0.25 }}>
-                          <Box sx={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: fresh.color }} />
+                          <Box aria-hidden="true" sx={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: fresh.color }} />
                           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                             {fresh.label}{fresh.ageSec != null ? ` · ${formatAge(fresh.ageSec)}` : ''}
                           </Typography>

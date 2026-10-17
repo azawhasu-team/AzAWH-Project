@@ -23,6 +23,7 @@ import { formatPhoenixTime, formatPhoenixFullDateTime, phoenixDateKey } from '@/
 import { downsampleMinMax } from '@/lib/downsample';
 import { detectPowerStatus } from '@/lib/powerStatus';
 import { snapBandToDates, type AnomalyBand } from '@/lib/anomalies';
+import { describeChart } from '@/lib/chartSummary';
 import { scaleWindow, panWindow, isFullWindow, type TimeWindow } from '@/lib/chartZoom';
 
 export interface ChartZoomRange {
@@ -348,6 +349,12 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
         </Box>
       ) : (
         <Box
+          role="img"
+          aria-label={describeChart(feature, visibleData, {
+            unit1,
+            unit2,
+            name2: param2Name,
+          })}
           sx={{ width: '100%', height: chartHeight, touchAction: canZoom && isPhone ? 'pan-y' : undefined }}
           onTouchStart={onTouchStart}
           onTouchMove={onTouchMove}
