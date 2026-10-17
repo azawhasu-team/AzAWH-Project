@@ -1,15 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ADMIN_AUTH_COOKIE, createAdminSessionToken, verifyAdminPassphrase } from '@/lib/auth';
+import { guardLogin } from '@/lib/loginGuard';
 
 const ADMIN_SESSION_TTL_SECONDS = 60 * 60 * 8;
 
 export async function POST(request: NextRequest) {
-  const { passphrase } = await request.json();
+  const guard = await guardLogin(request, 'admin');
+  if (guard.blocked) return guard.blocked;
+
+  const body = await request.json().catch(() => null);
+  const { passphrase } = (body ?? {}) as { passphrase?: unknown };
 
   if (typeof passphrase !== 'string' || !(await verifyAdminPassphrase(passphrase))) {
     return NextResponse.json({ error: 'Invalid passphrase' }, { status: 401 });
   }
 
+  await guard.succeeded();
   const token = await createAdminSessionToken();
   if (!token) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });

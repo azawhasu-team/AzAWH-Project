@@ -32,7 +32,8 @@ function AdminLoginForm() {
       });
 
       if (!res.ok) {
-        setError('Invalid passphrase.');
+        const data = res.status === 429 ? await res.json().catch(() => null) : null;
+        setError(data?.error ?? 'Invalid passphrase.');
         setSubmitting(false);
         return;
       }

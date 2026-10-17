@@ -38,9 +38,23 @@ out), and logs a warning at startup. `GET /health` shows
 Rotate by repeating 1-3; there is a brief window where the two differ, so do it
 at a quiet time.
 
+## Login throttling
+
+`lib/loginGuard.ts` counts each attempt *before* the credentials are checked (an
+atomic increment, so parallel guesses can't slip past) and clears the client's
+counter on success. Clients are identified by `x-real-ip`/`x-forwarded-for`, which
+Vercel sets itself. The two logins have separate budgets. The admin login is also
+behind the site login, so it can only be guessed at by someone already signed in.
+
 ## Known gaps
 
-- Login and the admin passphrase have no rate limiting or lockout.
+- Login throttling is only as strong as its store. The site login and the admin
+  passphrase each allow 5 attempts per client per 15 minutes (then 429 +
+  `Retry-After`), with a 200-attempts/hour circuit breaker across all clients. Without
+  Redis the counters live in each serverless instance's memory and reset on cold
+  start, so a determined attacker can get more guesses than that. For a hard limit set
+  `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` on Vercel (a free Upstash
+  database is enough); the limiter then counts in Redis shared by every instance.
 - One shared credential: no per-user audit trail, and individual sessions can't
   be revoked (rotate `SESSION_SECRET` to sign everyone out).
 - The CSP allows inline scripts/styles (Next's bootstrap, the colour-mode init

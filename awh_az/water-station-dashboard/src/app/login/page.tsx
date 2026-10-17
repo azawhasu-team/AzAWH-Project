@@ -34,7 +34,8 @@ function LoginForm() {
       });
 
       if (!res.ok) {
-        setError('Invalid username or password.');
+        const data = res.status === 429 ? await res.json().catch(() => null) : null;
+        setError(data?.error ?? 'Invalid username or password.');
         setSubmitting(false);
         return;
       }
