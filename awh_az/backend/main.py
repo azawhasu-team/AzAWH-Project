@@ -1019,7 +1019,12 @@ def _compute_hourly_aggregation_sync(
     # quantization/idle-draw noise than meaningful consumption, so it's
     # excluded rather than plotted as if it were a real reading — same
     # reasoning as the weight noise floor above, applied to energy instead.
-    ENERGY_NOISE_FLOOR_KWH = 0.1
+    # Station "off" threshold: an hour where the energy register moved by less
+    # than this is treated as the station being off. Its energy is excluded
+    # (None), which also drops that hour from specific energy consumption
+    # (energy_per_liter_kWh_L) and so from the Compare page. Keep in sync with
+    # STATION_OFF_ENERGY_KWH in lib/stationPower.ts in the dashboard.
+    ENERGY_NOISE_FLOOR_KWH = 0.2
     WATER_MIN_FRACTION_OF_EXPECTED = 0.10  # hours below this share of expected output are excluded
     # A "jump" is a sharp rise in the cumulative energy register right after
     # it sat flat: that single step is excluded, and energy after it counts
@@ -1322,7 +1327,7 @@ def _compute_hourly_aggregation_sync(
             span_hours = max(energy_span_hours_by_hour.get(hour_key, 0.0), 1.0)
             threshold_kwh = ENERGY_WH_HEURISTIC_THRESHOLD_KWH * span_hours
             energy_kwh = energy_delta / 1000.0 if energy_delta > threshold_kwh else energy_delta
-            row["energy_consumed_kWh"] = round(energy_kwh, 4) if energy_kwh > ENERGY_NOISE_FLOOR_KWH else None
+            row["energy_consumed_kWh"] = round(energy_kwh, 4) if energy_kwh >= ENERGY_NOISE_FLOOR_KWH else None
         else:
             row["energy_consumed_kWh"] = None
 

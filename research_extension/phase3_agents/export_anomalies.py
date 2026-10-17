@@ -18,6 +18,12 @@ What this is, and is not
 
 Usage:
   python export_anomalies.py [--days 30] [--out ../../awh_az/water-station-dashboard/public/anomalies.json]
+  python export_anomalies.py --source api --days 30     # read the live production API instead of local Postgres
+
+--source api needs no database: it pages through the deployed backend's
+/stations/{name}/readings (the same data the dashboard shows). Only stations that are
+active with data newer than the existing output file are re-scored; the rest are
+carried over unchanged instead of re-fetched, since the endpoint is slow (~25s per 10,000 rows).
 """
 
 from __future__ import annotations
@@ -25,7 +31,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import ssl
 import sys
+import time
+import urllib.parse
+import urllib.request
 import warnings
 from datetime import datetime, timezone
 
@@ -71,6 +81,62 @@ def station_names() -> dict[int, str]:
             return {int(i): n for i, n in cur.fetchall()}
     finally:
         conn.close()
+
+
+API_BASE = os.getenv("AWH_API_BASE", "https://az-awh-monitoring-system.onrender.com")
+API_PAGE = 10000
+# The window features use a trailing 24h baseline, so fetch a little before the scored span.
+API_LOOKBACK_PAD_DAYS = 2
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """Verified TLS. python.org builds ship without a CA bundle, so prefer certifi's, else the macOS one."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
+
+
+def _api_get(path: str, params: dict | None = None, retries: int = 3):
+    url = f"{API_BASE}{path}" + (("?" + urllib.parse.urlencode(params)) if params else "")
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(url, timeout=180, context=_ssl_context()) as r:
+                return json.load(r)
+        except Exception:
+            if attempt == retries - 1:
+                raise
+            time.sleep(5 * (attempt + 1))
+
+
+def api_stations() -> list[dict]:
+    return [
+        {"name": s["station_name"], "last_reading": s.get("metadata", {}).get("last_reading"),
+         "active": s.get("status") == "active"}
+        for s in _api_get("/stations")
+    ]
+
+
+def api_station_frame(name: str, sid: int, start: pd.Timestamp) -> pd.DataFrame:
+    """Readings for one station from `start` onward, shaped like load_station_data's frames."""
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        page = _api_get(
+            f"/stations/{urllib.parse.quote(name, safe='')}/readings",
+            {"start_date": start.isoformat(), "fields": ",".join(FEATURE_COLUMNS),
+             "limit": API_PAGE, "offset": offset},
+        )["data"]
+        rows.extend(page)
+        if len(page) < API_PAGE:
+            break
+        offset += API_PAGE
+    df = pd.DataFrame(rows, columns=["timestamp", *FEATURE_COLUMNS])
+    df.insert(0, "station_id", sid)
+    df = df.rename(columns={"timestamp": "time"})
+    df["time"] = pd.to_datetime(df["time"], utc=True, format="ISO8601")
+    return df.sort_values("time").drop_duplicates("time").reset_index(drop=True)
 
 
 def merge_intervals(flagged: pd.DataFrame) -> list[dict]:
@@ -214,16 +280,55 @@ def main() -> None:
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--out", default=DEFAULT_OUT)
     ap.add_argument("--stations", type=int, nargs="*", help="station ids (default: all with data)")
-    args = ap.parse_args()
 
+    ap.add_argument("--source", choices=["db", "api"], default="db")
+    args = ap.parse_args()
     warnings.filterwarnings("ignore")
     model = joblib.load(MODEL_PATH)
-    names = station_names()
-    ids = args.stations or sorted(names)
-    data = load_station_data(ids)
 
     result: dict[str, list[dict]] = {}
     suppressed: dict[str, str] = {}
+    carried: set[str] = set()
+
+    if args.source == "api":
+        stations = api_stations()
+        names = {i + 1: st["name"] for i, st in enumerate(stations)}
+        last_reading = {st["name"]: st["last_reading"] for st in stations}
+        is_active = {st["name"]: st["active"] for st in stations}
+        ids = args.stations or sorted(names)
+        # Nothing newer than the last export -> carry the previous result over.
+        previous = {}
+        if os.path.exists(args.out):
+            with open(args.out) as f:
+                previous = json.load(f)
+        prev_generated = pd.Timestamp(previous["generated_at"]) if previous.get("generated_at") else None
+        data = {}
+        for sid in ids:
+            name = names[sid]
+            last = pd.Timestamp(last_reading[name]) if last_reading.get(name) else None
+            if last is None:
+                continue
+            # Only live stations are re-scored. An inactive station's last_reading can be a
+            # stray row after a long gap and its recent data sparse, so a short API lookback
+            # scores something meaningless and would replace a good full-history result.
+            if prev_generated is not None and (not is_active[name] or last <= prev_generated) and (
+                name in previous.get("stations", {}) or name in previous.get("suppressed", {})
+            ):
+                if name in previous.get("stations", {}):
+                    result[name] = previous["stations"][name]
+                else:
+                    suppressed[name] = previous["suppressed"][name]
+                carried.add(name)
+                print(f"station {sid} {name}: not active / no new data, carried over")
+                continue
+            start = last - pd.Timedelta(days=args.days + API_LOOKBACK_PAD_DAYS)
+            print(f"station {sid} {name}: fetching from {start.date()} ...", flush=True)
+            data[sid] = api_station_frame(name, sid, start)
+    else:
+        names = station_names()
+        ids = args.stations or sorted(names)
+        data = load_station_data(ids)
+
     for sid in ids:
         df = data.get(sid)
         if df is None or df.empty:
@@ -255,6 +360,8 @@ def main() -> None:
         "max_flagged_fraction": MAX_FLAGGED_FRACTION,
         "stations": result,
         "suppressed": suppressed,
+        "source": args.source,
+        "carried_over": sorted(carried),
     }
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w") as f:

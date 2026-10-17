@@ -18,13 +18,15 @@ class FlowMeterReader:
         self._running = False
         self._thread = None
         self._pulse_count = 0
+        self._lock = threading.Lock()
 
         # Use pull_up=True for open-collector output
         self.sensor = Button(self.pin, pull_up=True)
         self.sensor.when_pressed = self._pulse_callback
 
     def _pulse_callback(self):
-        self._pulse_count += 1
+        with self._lock:
+            self._pulse_count += 1
 
     def start(self):
         if self._running:
@@ -38,14 +40,19 @@ class FlowMeterReader:
 
     def _run(self):
         last_count = 0
+        last_time = time.monotonic()
         while self._running:
             time.sleep(self.interval)
-            current_count = self._pulse_count
+            now = time.monotonic()
+            elapsed = now - last_time
+            last_time = now
+            with self._lock:
+                current_count = self._pulse_count
             pulses = current_count - last_count
             last_count = current_count
 
-            # Frequency in Hz
-            hz = pulses / self.interval
+            # Frequency in Hz, using measured elapsed time (sleep() drifts)
+            hz = pulses / elapsed if elapsed > 0 else 0.0
 
             # Flow in L/min
             flow_lmin = hz / 46.7

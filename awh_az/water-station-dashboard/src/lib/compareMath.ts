@@ -86,10 +86,27 @@ export function summarizeWindow(rows: HourlyDataRow[]) {
     }
   }
 
+  // Off detection: the backend nulls an hour's energy when it moved < 0.2 kWh
+  // (station off). Only meaningful where a power meter exists (some stations
+  // have none, and their energy is always null) — hence the power_mean check.
+  // 'all' = off for the whole window; 'now' = the last two hours were off.
+  // In both cases the "latest" snapshots would be stale values from before it
+  // switched off, so they're withheld and the UI says "off" instead.
+  let offState: 'all' | 'now' | null = null;
+  if (rows.length > 0 && rows.some((r) => r.power_mean != null)) {
+    if (rows.every((r) => r.energy_consumed_kWh == null)) offState = 'all';
+    else if (rows.slice(-2).every((r) => r.energy_consumed_kWh == null)) offState = 'now';
+  }
+  if (offState) {
+    lastEfficiencyPct = null;
+    lastSpecificEnergyKWhPerL = null;
+  }
+
   return {
     waterProducedL: hasWater ? waterL : null,
     lastEfficiencyPct,
     lastSpecificEnergyKWhPerL,
+    offState,
   };
 }
 

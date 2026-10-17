@@ -47,3 +47,23 @@ describe('detectPowerStatus', () => {
     expect(r.stretches).toHaveLength(2);
   });
 });
+
+describe('recentJumps', () => {
+  it('only includes jumps within 30 minutes of the newest reading', () => {
+    const t0 = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const pts: { date: string; value: number | null }[] = [];
+    // 2h of steady ~1000 W at 30s with small noise, one big jump early and one near the end
+    for (let i = 0; i < 240; i++) {
+      let v = 1000 + (i % 2) * 2;
+      if (i === 20) v = 1600;
+      if (i === 230) v = 1600;
+      pts.push({ date: new Date(t0 + i * 30_000).toISOString(), value: v });
+    }
+    const s = detectPowerStatus(pts);
+    expect(s.jumps.length).toBeGreaterThanOrEqual(2);
+    expect(s.recentJumps.length).toBeGreaterThan(0);
+    expect(s.recentJumps.length).toBeLessThan(s.jumps.length);
+    const last = new Date(pts[pts.length - 1].date).getTime();
+    expect(s.recentJumps.every(j => j.ms >= last - 30 * 60_000)).toBe(true);
+  });
+});

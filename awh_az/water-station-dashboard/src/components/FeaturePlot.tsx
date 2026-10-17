@@ -14,8 +14,8 @@ import {
   ReferenceArea,
   ResponsiveContainer,
 } from 'recharts';
-import { Box, Typography, Paper, Button, Alert } from '@mui/material';
-import { ZoomOutMap } from '@mui/icons-material';
+import { Box, Typography, Paper, Button, IconButton } from '@mui/material';
+import { ZoomOutMap, ZoomIn, ZoomOut } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { FeatureType, ChartDataPoint } from '@/types';
@@ -23,6 +23,7 @@ import { formatPhoenixTime, formatPhoenixFullDateTime, phoenixDateKey } from '@/
 import { downsampleMinMax } from '@/lib/downsample';
 import { detectPowerStatus } from '@/lib/powerStatus';
 import { snapBandToDates, type AnomalyBand } from '@/lib/anomalies';
+import { scaleWindow, panWindow, isFullWindow, type TimeWindow } from '@/lib/chartZoom';
 
 export interface ChartZoomRange {
   start: number;
@@ -49,13 +50,6 @@ interface FeaturePlotProps {
    * alert when the newest reading is still flat. Continuous charts only. */
   powerStatus?: boolean;
 }
-
-const formatDuration = (ms: number): string => {
-  const mins = Math.max(1, Math.round(ms / 60_000));
-  if (mins < 60) return `${mins} min`;
-  const h = Math.floor(mins / 60);
-  return h < 48 ? `${h} h ${mins % 60} min` : `${Math.round(h / 24)} days`;
-};
 
 const FeaturePlot: React.FC<FeaturePlotProps> = ({
   data,
@@ -97,6 +91,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
   const [dragRight, setDragRight] = React.useState<string | null>(null);
   const zoom = zoomRange;
   const canZoom = Boolean(onZoomChange);
+  const canDragSelect = canZoom && !isPhone;
 
   const visibleData = React.useMemo(
     () =>
@@ -152,6 +147,79 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
     });
   }, [isBar, anomalyBands, plotData]);
 
+  // Touch zoom (phones): pinch to zoom around the fingers, one finger to pan
+  // once zoomed, plus +/- buttons as a fallback. The chart's own drag-select
+  // can't be used on touch because a one-finger drag has to scroll the page.
+  const dataBounds = React.useMemo<TimeWindow | null>(() => {
+    if (data.length < 2) return null;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const d of data) {
+      const t = new Date(d.date).getTime();
+      if (t < lo) lo = t;
+      if (t > hi) hi = t;
+    }
+    return hi > lo ? { start: lo, end: hi } : null;
+  }, [data]);
+  const minSpanMs = isBar ? 3 * 3600_000 : 10 * 60_000;
+  const currentWindow: TimeWindow | null = zoom ?? dataBounds;
+  const applyWindow = (w: TimeWindow) => {
+    if (!dataBounds) return;
+    onZoomChange?.(isFullWindow(w, dataBounds) ? null : w);
+  };
+  const stepZoom = (factor: number) => {
+    if (!dataBounds || !currentWindow) return;
+    applyWindow(scaleWindow(currentWindow, factor, 0.5, dataBounds, minSpanMs));
+  };
+  const touchRef = React.useRef<
+    | { kind: 'pinch'; dist: number; win: TimeWindow; anchor: number }
+    | { kind: 'pan'; x: number; win: TimeWindow }
+    | null
+  >(null);
+  const rafRef = React.useRef<number | null>(null);
+  const scheduleApply = (w: TimeWindow) => {
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      applyWindow(w);
+    });
+  };
+  React.useEffect(() => () => {
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+  }, []);
+  const touchDist = (t: React.TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!canZoom || !isPhone || !dataBounds || !currentWindow) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (e.touches.length === 2) {
+      const mid = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      touchRef.current = {
+        kind: 'pinch',
+        dist: touchDist(e.touches),
+        win: currentWindow,
+        anchor: Math.min(Math.max((mid - rect.left) / rect.width, 0), 1),
+      };
+    } else if (e.touches.length === 1 && zoom) {
+      touchRef.current = { kind: 'pan', x: e.touches[0].clientX, win: currentWindow };
+    } else {
+      touchRef.current = null;
+    }
+  };
+  const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    const t = touchRef.current;
+    if (!t || !dataBounds) return;
+    if (t.kind === 'pinch' && e.touches.length === 2) {
+      const dist = touchDist(e.touches);
+      if (dist > 0) scheduleApply(scaleWindow(t.win, t.dist / dist, t.anchor, dataBounds, minSpanMs));
+    } else if (t.kind === 'pan' && e.touches.length === 1) {
+      const width = e.currentTarget.getBoundingClientRect().width || 1;
+      scheduleApply(panWindow(t.win, -(e.touches[0].clientX - t.x) / width, dataBounds, minSpanMs));
+    }
+  };
+  const onTouchEnd = () => {
+    touchRef.current = null;
+  };
+
   const commitDrag = () => {
     if (dragLeft && dragRight && dragLeft !== dragRight) {
       const a = new Date(dragLeft).getTime();
@@ -176,40 +244,6 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
     // ~12 rotated labels fit a desktop chart; on a phone they overlap into a smear.
     return Math.floor(plotData.length / (isPhone ? 4 : 12));
   }, [plotData, isPhone]);
-  const getFeatureUnit = (feature: FeatureType): string => {
-    switch (feature) {
-      case 'Temperature':
-        return '°C';
-      case 'Humidity':
-        return '%';
-      case 'Population':
-        return 'people';
-      case 'Water Production':
-        return 'L/hr';
-      case 'pH Level':
-        return 'pH';
-      default:
-        return '';
-    }
-  };
-
-  const getFeatureColor = (feature: FeatureType): string => {
-    switch (feature) {
-      case 'Temperature':
-        return '#ff6b35';
-      case 'Humidity':
-        return '#004e89';
-      case 'Population':
-        return '#7209b7';
-      case 'Water Production':
-        return '#1976d2';
-      case 'pH Level':
-        return '#2e7d32';
-      default:
-        return '#1976d2';
-    }
-  };
-
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     const time = formatPhoenixTime(date);
@@ -274,48 +308,32 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
           )}
         </Box>
         {canZoom && (
-          zoom ? (
-            <Button size="small" startIcon={<ZoomOutMap />} onClick={() => onZoomChange?.(null)}>
-              Reset zoom ({visibleData.length.toLocaleString()} readings)
-            </Button>
-          ) : (
-            data.length > 20 && (
-              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                Drag across the chart to zoom
-              </Typography>
-            )
-          )
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            {isPhone && dataBounds && data.length > 20 && (
+              <>
+                <IconButton size="small" aria-label="Zoom out" onClick={() => stepZoom(2)} disabled={!zoom}>
+                  <ZoomOut fontSize="small" />
+                </IconButton>
+                <IconButton size="small" aria-label="Zoom in" onClick={() => stepZoom(0.5)}>
+                  <ZoomIn fontSize="small" />
+                </IconButton>
+              </>
+            )}
+            {zoom ? (
+              <Button size="small" startIcon={<ZoomOutMap />} onClick={() => onZoomChange?.(null)}>
+                Reset zoom ({visibleData.length.toLocaleString()} readings)
+              </Button>
+            ) : (
+              data.length > 20 && (
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  {isPhone ? 'Pinch or use + to zoom' : 'Drag across the chart to zoom'}
+                </Typography>
+              )
+            )}
+          </Box>
         )}
       </Box>
 
-      {flatPower && (
-        <>
-          {flatPower.currentStretch ? (
-            <Alert severity="error" sx={{ mb: 1 }}>
-              {flatPower.currentStretch.atZero
-                ? `Power has read 0 W since ${formatPhoenixFullDateTime(new Date(flatPower.currentStretch.startMs))}`
-                : `Power has not changed since ${formatPhoenixFullDateTime(new Date(flatPower.currentStretch.startMs))}`}
-              {' '}({formatDuration(flatPower.currentStretch.endMs - flatPower.currentStretch.startMs)}) — the station may be
-              off or the power meter stuck.
-            </Alert>
-          ) : flatPower.stretches.length > 0 ? (
-            <Alert severity="success" sx={{ mb: 1 }}>
-              Power is running. {flatPower.stretches.length} off/flat stretch
-              {flatPower.stretches.length === 1 ? '' : 'es'} earlier in this range, shown in red.
-            </Alert>
-          ) : null}
-          {flatPower.jumps.length > 0 && (() => {
-            const last = flatPower.jumps[flatPower.jumps.length - 1];
-            return (
-              <Alert severity="warning" sx={{ mb: 1 }}>
-                {flatPower.jumps.length} sudden power change{flatPower.jumps.length === 1 ? '' : 's'} in this range
-                (amber dots). Latest: {last.from.toFixed(0)} W → {last.to.toFixed(0)} W at{' '}
-                {formatPhoenixFullDateTime(new Date(last.ms))}.
-              </Alert>
-            );
-          })()}
-        </>
-      )}
 
       {data.length === 0 ? (
         <Box
@@ -329,15 +347,21 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
           </Typography>
         </Box>
       ) : (
-        <Box sx={{ width: '100%', height: chartHeight }}>
+        <Box
+          sx={{ width: '100%', height: chartHeight, touchAction: canZoom && isPhone ? 'pan-y' : undefined }}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+          onTouchCancel={onTouchEnd}
+        >
           <ResponsiveContainer width="100%" height="100%">
             <ChartContainer
               data={plotData}
               margin={{ top: 10, right: hasSecondParam ? (isPhone ? 10 : 70) : 20, left: isPhone ? 0 : 10, bottom: 60 }}
-              onMouseDown={canZoom ? (e) => e?.activeLabel != null && setDragLeft(String(e.activeLabel)) : undefined}
-              onMouseMove={canZoom && dragLeft ? (e) => e?.activeLabel != null && setDragRight(String(e.activeLabel)) : undefined}
-              onMouseUp={canZoom ? commitDrag : undefined}
-              onMouseLeave={canZoom ? () => { setDragLeft(null); setDragRight(null); } : undefined}
+              onMouseDown={canDragSelect ? (e) => e?.activeLabel != null && setDragLeft(String(e.activeLabel)) : undefined}
+              onMouseMove={canDragSelect && dragLeft ? (e) => e?.activeLabel != null && setDragRight(String(e.activeLabel)) : undefined}
+              onMouseUp={canDragSelect ? commitDrag : undefined}
+              onMouseLeave={canDragSelect ? () => { setDragLeft(null); setDragRight(null); } : undefined}
             >
               <defs>
                 <linearGradient id="grad1" x1="0" y1="0" x2="0" y2="1">

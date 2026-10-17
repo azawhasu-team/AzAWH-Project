@@ -19,6 +19,8 @@ export const JUMP_MIN_HISTORY = 10;
 export const JUMP_TYPICAL_MULT = 4;
 export const JUMP_MIN_FRACTION = 0.25;
 export const JUMP_MIN_ABS_W = 25;
+// Jumps within this long of the newest reading are "recent" and raised as an alert.
+export const RECENT_JUMP_WINDOW_MIN = 30;
 
 interface PowerPoint {
   date: string;
@@ -47,6 +49,8 @@ export interface PowerStatus {
   jumps: PowerJump[];
   /** The off stretch that is still ongoing at the newest reading, if any. */
   currentStretch: OffStretch | null;
+  /** Jumps within RECENT_JUMP_WINDOW_MIN of the newest reading. */
+  recentJumps: PowerJump[];
 }
 
 function percentile(sorted: number[], p: number): number {
@@ -141,5 +145,9 @@ export function detectPowerStatus(
   const last = stretches[stretches.length - 1];
   const currentStretch = last && last.endMs === lastMs ? last : null;
 
-  return { offDates, jumpDates, stretches, jumps, currentStretch };
+  const recentJumps = Number.isFinite(lastMs)
+    ? jumps.filter(j => j.ms >= lastMs - RECENT_JUMP_WINDOW_MIN * 60_000)
+    : [];
+
+  return { offDates, jumpDates, stretches, jumps, currentStretch, recentJumps };
 }

@@ -114,6 +114,7 @@ interface StationComparison {
   lastEfficiencyPct: number | null;
   lastSpecificEnergyKWhPerL: number | null;
   hasRecentData: boolean;
+  offState: 'all' | 'now' | null;
 }
 
 const WINDOW_DAYS = 7;
@@ -388,6 +389,7 @@ export default function ComparePage() {
         lastEfficiencyPct: summary.lastEfficiencyPct,
         lastSpecificEnergyKWhPerL: summary.lastSpecificEnergyKWhPerL,
         hasRecentData: rows.length > 0,
+        offState: summary.offState,
       };
     });
     // Online stations first (stable partition), then by water produced
@@ -1123,6 +1125,20 @@ export default function ComparePage() {
                 : 'never reported any data.'}
             </Typography>
           )}
+          {compareMode === 'stations' && (() => {
+            // Stations left off the chart because they're switched off: say so
+            // rather than leaving the absence unexplained.
+            const plotted = new Set(plottedData.map((d) => d.stationName));
+            const offNames = tableRows
+              .filter((r) => r.offState && !plotted.has(r.station.station_name))
+              .map((r) => r.station.display_name || r.station.station_name);
+            if (offNames.length === 0) return null;
+            return (
+              <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block', mt: 0.5 }}>
+                Not shown because the station is off (under 0.2 kWh/hour): {offNames.join(', ')}.
+              </Typography>
+            );
+          })()}
         </Paper>
         </motion.div>
       )}
@@ -1148,7 +1164,7 @@ export default function ComparePage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {tableRows.map(({ station, waterProducedL, lastEfficiencyPct, lastSpecificEnergyKWhPerL, hasRecentData }, i) => (
+              {tableRows.map(({ station, waterProducedL, lastEfficiencyPct, lastSpecificEnergyKWhPerL, hasRecentData, offState }, i) => (
                 <React.Fragment key={station.station_name}>
                   {i === firstOfflineIndex && firstOfflineIndex > 0 && (
                     <TableRow>
@@ -1177,7 +1193,7 @@ export default function ComparePage() {
                     <Chip
                       size="small"
                       color={isStationOnline(station.metadata.last_reading, nowMs) ? 'success' : 'error'}
-                      label={isStationOnline(station.metadata.last_reading, nowMs) ? 'Online' : 'Offline'}
+                      label={isStationOnline(station.metadata.last_reading, nowMs) ? (offState ? 'Online, but off' : 'Online') : 'Offline'}
                       sx={{
                         backgroundColor: isStationOnline(station.metadata.last_reading, nowMs) ? 'success.light' : 'error.light',
                         color: isStationOnline(station.metadata.last_reading, nowMs) ? 'success.main' : 'error.main',
@@ -1195,7 +1211,9 @@ export default function ComparePage() {
                       />
                     ) : (
                       <Typography sx={{ color: 'text.disabled', fontSize: '0.85rem' }}>
-                        {hasRecentData ? '—' : `No data in ${WINDOW_DAYS}d`}
+                        {offState === 'all'
+                          ? `Station off all ${WINDOW_DAYS}d`
+                          : hasRecentData ? '—' : `No data in ${WINDOW_DAYS}d`}
                       </Typography>
                     )}
                   </TableCell>
@@ -1203,7 +1221,7 @@ export default function ComparePage() {
                     <MetricBar
                       value={lastEfficiencyPct}
                       max={maxEfficiency}
-                      label={lastEfficiencyPct != null ? `${lastEfficiencyPct.toFixed(1)}%` : '—'}
+                      label={lastEfficiencyPct != null ? `${lastEfficiencyPct.toFixed(1)}%` : offState ? 'Off' : '—'}
                       color="#ffcb25"
                     />
                   </TableCell>
@@ -1211,7 +1229,7 @@ export default function ComparePage() {
                     <MetricBar
                       value={lastSpecificEnergyKWhPerL}
                       max={maxSpecificEnergy}
-                      label={lastSpecificEnergyKWhPerL != null ? `${lastSpecificEnergyKWhPerL.toFixed(3)} kWh/L` : '—'}
+                      label={lastSpecificEnergyKWhPerL != null ? `${lastSpecificEnergyKWhPerL.toFixed(3)} kWh/L` : offState ? 'Off' : '—'}
                       color="#5c6bc0"
                     />
                   </TableCell>

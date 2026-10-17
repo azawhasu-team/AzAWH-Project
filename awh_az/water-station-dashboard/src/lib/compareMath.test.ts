@@ -39,7 +39,34 @@ describe('summarizeWindow', () => {
       waterProducedL: 3,
       lastEfficiencyPct: 20, // sensor out in the last hour doesn't blank it
       lastSpecificEnergyKWhPerL: 0.3,
+      offState: null,
     });
+  });
+
+  it('flags a station with a power meter but no energy all window as off, and withholds latest snapshots', () => {
+    const rows = [
+      row({ power_mean: 5, energy_consumed_kWh: null, harvesting_efficiency_pct_hourly: 10 }),
+      row({ power_mean: 5, energy_consumed_kWh: null, harvesting_efficiency_pct_hourly: 20 }),
+    ];
+    const s = summarizeWindow(rows);
+    expect(s.offState).toBe('all');
+    expect(s.lastEfficiencyPct).toBeNull();
+    expect(s.lastSpecificEnergyKWhPerL).toBeNull();
+  });
+
+  it('flags a station that stopped consuming in the last two hours as off now', () => {
+    const rows = [
+      row({ power_mean: 900, energy_consumed_kWh: 1, energy_per_liter_kWh_L: 0.3 }),
+      row({ power_mean: 5, energy_consumed_kWh: null }),
+      row({ power_mean: 5, energy_consumed_kWh: null }),
+    ];
+    const s = summarizeWindow(rows);
+    expect(s.offState).toBe('now');
+    expect(s.lastSpecificEnergyKWhPerL).toBeNull();
+  });
+
+  it('does not call a station without a power meter off', () => {
+    expect(summarizeWindow([row({ energy_consumed_kWh: null }), row({ energy_consumed_kWh: null })]).offState).toBeNull();
   });
 
   it('reports null water, not zero, when no hour has a value', () => {

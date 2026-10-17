@@ -46,7 +46,6 @@ function useWidth() {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    setWidth(el.clientWidth || 640);
     const ro = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width || 640));
     ro.observe(el);
     return () => ro.disconnect();

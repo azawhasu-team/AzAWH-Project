@@ -15,8 +15,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Menu,
-  ListItemText,
   Checkbox,
   FormGroup,
   FormControlLabel,
@@ -31,7 +29,7 @@ import { format } from 'date-fns';
 import FeaturePlot, { type ChartZoomRange } from '@/components/FeaturePlot';
 import { type StationInfo, type StationReading, type HourlyDataRow } from '@/lib/api-client';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
-import { FeatureType, ChartDataPoint, StationData } from '@/types';
+import { FeatureType, ChartDataPoint } from '@/types';
 import {
   fieldDisplayNames,
   fieldCategories,
@@ -40,9 +38,13 @@ import {
   fieldUnitFor,
   AWH_DUCT_AREA_M2,
 } from '@/lib/stationFields';
+import { stationPowerState } from '@/lib/stationPower';
+import AlertsPanel from '@/components/AlertsPanel';
+import { detectPowerStatus } from '@/lib/powerStatus';
+import { reportingAlert, stationOffAlert, powerAlerts, anomalyAlerts, splitAlerts, type StationAlert } from '@/lib/alerts';
 import { convertLiters, convertSpecificEnergy, UNIT_LABEL, type VolumeUnit } from '@/lib/compareMath';
 import { slugify } from '@/lib/slug';
-import { bandsForChart, intervalsInRange } from '@/lib/anomalies';
+import { bandsForChart, intervalsInRange, anomalyFreshness } from '@/lib/anomalies';
 import { LIVE_MAX_AGE_SECONDS, ONLINE_MAX_AGE_SECONDS } from '@/lib/freshness';
 import { useStations, useLiveReading, useLatestReadings, useStationReadingsRange, useHourly, useAnomalies } from '@/hooks/queries';
 import { buildParameterCategories, buildChartSeries } from '@/lib/stationChartData';
@@ -86,12 +88,14 @@ export default function StationDetails() {
   const [selectedUnit, setSelectedUnit] = useState<string>('');
   const [selectedParameters, setSelectedParameters] = useState<string[]>([]);
   // 'stack' = one chart per row; 'grid' = two charts per row on wide screens.
-  const [chartLayout, setChartLayout] = useState<'stack' | 'grid'>('stack');
-  useEffect(() => {
+  // The page renders a spinner until mounted, so reading localStorage in the
+  // initializer can't cause a hydration mismatch.
+  const [chartLayout, setChartLayout] = useState<'stack' | 'grid'>(() => {
     try {
-      if (localStorage.getItem('stationChartLayout') === 'grid') setChartLayout('grid');
+      if (typeof window !== 'undefined' && localStorage.getItem('stationChartLayout') === 'grid') return 'grid';
     } catch {}
-  }, []);
+    return 'stack';
+  });
   const changeChartLayout = (v: 'stack' | 'grid') => {
     setChartLayout(v);
     try { localStorage.setItem('stationChartLayout', v); } catch {}
@@ -110,7 +114,7 @@ export default function StationDetails() {
   // the station list's last_reading (Firestore, which can be ahead of Postgres
   // by the ingestion interval). Never moves backwards, so a lagging or cached
   // poll response can't make a station look like it stopped reporting.
-  const newestSeenMs = React.useRef<{ station: string | null; ms: number }>({ station: null, ms: 0 });
+  const [newestSeen, setNewestSeen] = useState<{ station: string | null; ms: number }>({ station: null, ms: 0 });
   const liveReadingError = liveQuery.error ? liveQuery.error.message : null;
   const [liveNowTick, setLiveNowTick] = useState(() => Date.now());
 
@@ -267,17 +271,34 @@ export default function StationDetails() {
     );
   }, [showAnomalies, stationAnomalies, startDate, endDate, chartDataByParam]);
   
-  const filteredData = useMemo(() => {
-    if (!startDate || !endDate || readings.length === 0) return [];
-    
-    const start = startDate.getTime();
-    const end = endDate.getTime();
-    
-    return readings.filter(reading => {
-      const readingDate = new Date(reading.timestamp).getTime();
-      return readingDate >= start && readingDate <= end;
-    });
-  }, [startDate, endDate, readings]);
+  // Alerts (lib/alerts.ts): power and model-flagged alerts are computed here
+  // (hooks must precede the early returns below); reporting/off alerts are added
+  // once the live status is known. The power series comes from the loaded range
+  // when it reaches the live edge, otherwise from the latest readings, so
+  // "active" always reflects now.
+  const dataAlerts = useMemo(() => {
+    const liveTs = liveReading ? new Date(liveReading.timestamp).getTime() : null;
+    const rangeReadings = readingsQuery.data?.data;
+    const rangeNewest = rangeReadings?.length
+      ? Math.max(...rangeReadings.slice(0, 3).map(r => new Date(r.timestamp).getTime()))
+      : null;
+    const useRange = rangeNewest != null && (liveTs == null || rangeNewest >= liveTs - 3600_000);
+    const src = (useRange ? rangeReadings : latestQuery.data) ?? [];
+    const series = src
+      .filter(r => typeof r.power === 'number')
+      .map(r => ({ date: r.timestamp, value: r.power as number }))
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const newestMs = series.length ? new Date(series[series.length - 1].date).getTime() : (liveTs ?? 0);
+    const last24 = series.filter(pt => new Date(pt.date).getTime() >= newestMs - 24 * 3600_000);
+    const fmt = (ms: number) => formatPhoenixMonthDayTime(new Date(ms));
+    return {
+      newestMs,
+      alerts: [
+        ...(last24.length > 1 ? powerAlerts(detectPowerStatus(last24), newestMs, fmt) : []),
+        ...anomalyAlerts(stationAnomalies ?? []),
+      ] as StationAlert[],
+    };
+  }, [readingsQuery.data, latestQuery.data, liveReading, stationAnomalies]);
 
   // Keep every hour (don't filter out nulls) so this chart's x-axis stays
   // aligned with the water production / specific energy charts below, which
@@ -329,13 +350,15 @@ export default function StationDetails() {
   const candidateMs = [liveReading?.timestamp, station?.metadata.last_reading]
     .map(t => (t ? new Date(t).getTime() : NaN))
     .filter(ms => Number.isFinite(ms));
-  if (newestSeenMs.current.station !== (station?.station_name ?? null)) {
-    newestSeenMs.current = { station: station?.station_name ?? null, ms: 0 };
+  // Derived during render (no ref mutation): remember the newest timestamp seen
+  // for this station, resetting when the station changes. Setting state during
+  // render is React's sanctioned way to adjust state from props.
+  const stationKey = station?.station_name ?? null;
+  const seenMs = newestSeen.station === stationKey ? newestSeen.ms : 0;
+  const lastReadingMs = candidateMs.length > 0 ? Math.max(seenMs, ...candidateMs) || null : seenMs || null;
+  if (newestSeen.station !== stationKey || (lastReadingMs ?? 0) > newestSeen.ms) {
+    setNewestSeen({ station: stationKey, ms: lastReadingMs ?? 0 });
   }
-  if (candidateMs.length > 0) {
-    newestSeenMs.current.ms = Math.max(newestSeenMs.current.ms, ...candidateMs);
-  }
-  const lastReadingMs = newestSeenMs.current.ms || null;
   const liveAgeSec = lastReadingMs !== null
     ? Math.max(0, Math.floor((liveNowTick - lastReadingMs) / 1000))
     : null;
@@ -354,9 +377,32 @@ export default function StationDetails() {
         : liveAgeSec < ONLINE_MAX_AGE_SECONDS
           ? 'stale'
           : 'dead';
-  const liveStatusColor = { fresh: '#4caf50', stale: '#ff9800', dead: '#f44336', unknown: '#9e9e9e' }[liveStatus];
-  const liveStatusText = { fresh: 'Live', stale: 'Delayed', dead: 'Not sending', unknown: 'Waiting for data' }[liveStatus];
+  const liveStatusColorBase = { fresh: '#4caf50', stale: '#ff9800', dead: '#f44336', unknown: '#9e9e9e' }[liveStatus];
   const stationIsOnline = liveAgeSec !== null && liveAgeSec < ONLINE_MAX_AGE_SECONDS;
+  // Reporting but not consuming energy (< 0.2 kWh over the last hour) = switched off.
+  // Use the newest readings, not the (possibly older) selected range.
+  const stationIsOff =
+    stationIsOnline && stationPowerState(latestQuery.data ?? []) === 'off';
+  const liveStatusColor = stationIsOff ? '#757575' : liveStatusColorBase;
+  const { active: alertsActive, recent: alertsRecent } = splitAlerts(
+    [
+      ...reportingAlert(liveStatus, lastReadingMs, liveNowTick),
+      ...stationOffAlert(stationIsOff, liveNowTick),
+      ...dataAlerts.alerts,
+    ],
+    Math.max(dataAlerts.newestMs, lastReadingMs ?? 0)
+  );
+  // Zoom every chart to an alert with some context either side.
+  const showAlertOnCharts = (a: StationAlert) => {
+    const pad = Math.max((a.endMs - a.startMs) * 0.5, 15 * 60_000);
+    setChartZoom({ start: a.startMs - pad, end: a.endMs + pad });
+    document.getElementById('station-charts')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  const alertInRange = (a: StationAlert) =>
+    !!startDate && !!endDate && a.endMs >= startDate.getTime() && a.startMs <= endDate.getTime();
+  // "Live, but off": the station is uploading but not consuming energy.
+  const liveStatusBase = { fresh: 'Live', stale: 'Delayed', dead: 'Not sending', unknown: 'Waiting for data' }[liveStatus];
+  const liveStatusText = stationIsOff ? `${liveStatusBase}, but off` : liveStatusBase;
 
   // Totals for the selected date period — summed from the hourly aggregation rather than
   // averaging per-hour ratios, so a mostly-idle period doesn't skew the energy/liter figure.
@@ -479,15 +525,15 @@ export default function StationDetails() {
               </Typography>
               <Chip
                 icon={<CircleIcon sx={{ fontSize: 16 }} />}
-                label={stationIsOnline ? 'Online' : 'Offline'}
-                color={stationIsOnline ? 'success' : 'error'}
+                label={stationIsOff ? 'Off' : stationIsOnline ? 'Online' : 'Offline'}
+                color={stationIsOff ? 'default' : stationIsOnline ? 'success' : 'error'}
                 sx={{ 
                   fontWeight: 600,
                   fontSize: '0.95rem',
                   px: 1.5,
                   py: 2.5,
                   backgroundColor: 'white',
-                  color: stationIsOnline ? '#4caf50' : '#f44336',
+                  color: stationIsOff ? '#757575' : stationIsOnline ? '#4caf50' : '#f44336',
                 }}
               />
             </Box>
@@ -577,7 +623,7 @@ export default function StationDetails() {
                   height: 10,
                   borderRadius: '50%',
                   backgroundColor: liveStatusColor,
-                  animation: liveStatus === 'fresh' ? 'pulse 2s infinite' : 'none',
+                  animation: liveStatus === 'fresh' && !stationIsOff ? 'pulse 2s infinite' : 'none',
                   '@keyframes pulse': {
                     '0%, 100%': { opacity: 1 },
                     '50%': { opacity: 0.4 },
@@ -587,6 +633,7 @@ export default function StationDetails() {
               <Typography variant="body2" sx={{ fontWeight: 600, color: liveStatusColor }}>
                 {liveStatusText}
               </Typography>
+
               {liveAgeLabel && (
                 <Typography variant="caption" color="text.secondary">
                   · last reading {liveAgeLabel}
@@ -885,6 +932,13 @@ export default function StationDetails() {
         </Alert>
       )}
 
+      <AlertsPanel
+        active={alertsActive}
+        recent={alertsRecent}
+        canJump={alertInRange}
+        onJump={showAlertOnCharts}
+      />
+
       {anomalyFile && (stationAnomalies || anomalySuppressedReason) && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 1 }}>
           {stationAnomalies ? (
@@ -898,7 +952,17 @@ export default function StationDetails() {
                 own recent normal, such as a sudden humidity jump or the water vessel being emptied.
                 Not confirmed incidents. Covers the last {anomalyFile.days_scored} days of data, scored{' '}
                 {format(new Date(anomalyFile.generated_at), 'MMM d, yyyy')}.
+                {' '}This is a periodic batch check, not live: anything after that date has not been scored.
               </Typography>
+              {anomalyFreshness(anomalyFile.generated_at).stale && (
+                <Alert severity="warning" sx={{ width: '100%', py: 0 }}>
+                  Out of date: last scored{' '}
+                  {anomalyFreshness(anomalyFile.generated_at).ageDays != null
+                    ? `${anomalyFreshness(anomalyFile.generated_at).ageDays} days ago`
+                    : 'at an unknown time'}
+                  . A quiet chart after {format(new Date(anomalyFile.generated_at), 'MMM d')} means &quot;not checked&quot;, not &quot;all clear&quot;.
+                </Alert>
+              )}
             </>
           ) : (
             <Typography variant="caption" color="text.secondary">
@@ -930,6 +994,7 @@ export default function StationDetails() {
       )}
 
       <Box
+        id="station-charts"
         sx={{
           display: 'grid',
           gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: chartLayout === 'grid' ? 'repeat(2, minmax(0, 1fr))' : 'minmax(0, 1fr)' },

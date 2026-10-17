@@ -56,3 +56,16 @@ describe('snapBandToDates', () => {
     expect(snapBandToDates(dates, ms(-30), ms(15))).toEqual({ x1: T(0), x2: T(10) });
   });
 });
+
+import { anomalyFreshness } from './anomalies';
+
+describe('anomalyFreshness', () => {
+  const now = Date.UTC(2026, 9, 17);
+  it('is fresh within a week and stale after', () => {
+    expect(anomalyFreshness('2026-10-14T00:00:00Z', now)).toEqual({ ageDays: 3, stale: false });
+    expect(anomalyFreshness('2026-09-24T08:13:17Z', now)).toEqual({ ageDays: 22, stale: true });
+  });
+  it('treats an unparseable date as stale', () => {
+    expect(anomalyFreshness('nope', now)).toEqual({ ageDays: null, stale: true });
+  });
+});

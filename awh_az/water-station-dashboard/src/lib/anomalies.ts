@@ -118,3 +118,17 @@ export function snapBandToDates(
   }
   return { x1: dates[first], x2: dates[last] };
 }
+
+/** Older than this and the overlay is flagged as out of date. */
+export const ANOMALY_STALE_AFTER_DAYS = 7;
+
+/**
+ * How old the batch export is. The overlay is not live inference, so anything
+ * after `generated_at` has simply not been scored — a quiet chart there means
+ * "not checked", not "all clear".
+ */
+export function anomalyFreshness(generatedAt: string, nowMs: number = Date.now()) {
+  const ms = new Date(generatedAt).getTime();
+  const ageDays = Number.isFinite(ms) ? Math.max(0, Math.floor((nowMs - ms) / 86_400_000)) : null;
+  return { ageDays, stale: ageDays == null || ageDays >= ANOMALY_STALE_AFTER_DAYS };
+}
