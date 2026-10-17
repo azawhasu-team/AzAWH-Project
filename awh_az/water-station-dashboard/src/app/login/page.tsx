@@ -3,6 +3,7 @@
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
+import { safeRedirectPath } from '@/lib/safeRedirect';
 import {
   Box,
   Card,
@@ -38,7 +39,7 @@ function LoginForm() {
         return;
       }
 
-      const redirectTo = searchParams.get('from') || '/';
+      const redirectTo = safeRedirectPath(searchParams.get('from'));
       router.push(redirectTo);
       router.refresh();
     } catch {

@@ -79,7 +79,12 @@ export default function StationDetails() {
       : null;
   
   // State for mounted check
-  const [mounted, setMounted] = useState(false);
+  // false on the server / first hydration pass, true afterwards, without an effect
+  const mounted = React.useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
 
   // Start with no selection so buttons show "Select ..." placeholders
   const [startDate, setStartDate] = useState<Date | null>(null);
@@ -184,11 +189,6 @@ export default function StationDetails() {
     readingsQuery.error && readingsQuery.error !== dismissedError
       ? `Couldn't load readings for that date range: ${readingsQuery.error.message}`
       : null;
-
-  // Handle mounting
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
 
   // Ticks the "X ago" freshness label between polls
   useEffect(() => {

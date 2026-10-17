@@ -3,7 +3,10 @@
  * Handles all HTTP requests to FastAPI server with type safety
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// The backend is private (needs an API key), so the browser never calls it directly:
+// it calls this app's own /api/backend proxy, which checks the site session and
+// attaches the key server-side (see lib/backendProxy.ts).
+const API_BASE_URL = '/api/backend';
 
 export interface StationReading {
   station_name: string;

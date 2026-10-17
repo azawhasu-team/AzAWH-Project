@@ -1,5 +1,6 @@
 'use client';
 
+import { safeRedirectPath } from '@/lib/safeRedirect';
 import { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Image from 'next/image';
@@ -45,8 +46,7 @@ function AdminLoginForm() {
       // Restricted to a same-origin path — unlike router.push, window.location.assign
       // would actually follow an absolute/protocol-relative URL, so an unvalidated
       // `from` param would be an open redirect.
-      const from = searchParams.get('from') || '';
-      const redirectTo = from.startsWith('/') && !from.startsWith('//') ? from : '/admin/stations';
+      const redirectTo = safeRedirectPath(searchParams.get('from'), '/admin/stations');
       window.location.assign(redirectTo);
     } catch {
       setError('Something went wrong. Please try again.');

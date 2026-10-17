@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     # attach to admin writes; never sent to the browser. Firebase Storage bucket
     # backs station image uploads. Both empty by default (fail closed).
     admin_api_key: str = ""
+
+    # Read-access key for every data endpoint. The dashboard's server attaches it
+    # (X-API-Key) when it proxies browser requests, so the API is not publicly
+    # readable. While UNSET the API stays open (transitional: lets the key be set on
+    # the dashboard first, then here) and a warning is logged at startup.
+    api_key: str = ""
     firebase_storage_bucket: str = ""
 
     # Data Configuration

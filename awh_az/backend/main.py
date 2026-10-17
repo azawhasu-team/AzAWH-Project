@@ -1,11 +1,12 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Query, Header, UploadFile, File, Depends
+from fastapi import FastAPI, HTTPException, Query, Header, UploadFile, File, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.concurrency import run_in_threadpool
 from typing import List, Optional
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
+import hmac
 import itertools
 import json
 import io
@@ -274,12 +275,37 @@ def _station_doc_id_exists(stations_ref, station_name: str) -> bool:
     return any(d.id == station_name for d in stations_ref.list_documents())
 
 
+def _keys_match(supplied: Optional[str], expected: str) -> bool:
+    """Constant-time comparison; an unset expected key never matches."""
+    if not expected or not supplied:
+        return False
+    return hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+
+
 def require_admin_key(x_admin_key: Optional[str] = Header(None)):
-    """Gates the /admin/* write endpoints. Fails closed: rejects every
-    request (even a correct-looking one) if ADMIN_API_KEY isn't configured,
-    same philosophy as the dashboard's own verifyCredentials()."""
-    if not settings.admin_api_key or x_admin_key != settings.admin_api_key:
+    """Gates the /admin/* write endpoints (and the cache/registry mutations).
+    Fails closed: rejects every request (even a correct-looking one) if
+    ADMIN_API_KEY isn't configured, same philosophy as the dashboard's own
+    verifyCredentials()."""
+    if not _keys_match(x_admin_key, settings.admin_api_key):
         raise HTTPException(status_code=403, detail="Invalid or missing admin key")
+
+
+# Reachable without a key: liveness probes and the root banner.
+_PUBLIC_PATHS = {"/", "/health"}
+
+
+def require_api_key(request: Request, x_api_key: Optional[str] = Header(None)):
+    """App-wide read gate. /admin/* has its own (admin) key, /health and / stay
+    public for uptime probes. While API_KEY is unset the API is open — see
+    Settings.api_key."""
+    path = request.url.path
+    if path in _PUBLIC_PATHS or path.startswith("/admin/"):
+        return
+    if not settings.api_key:
+        return
+    if not _keys_match(x_api_key, settings.api_key):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 # ---------------------------------------------------------------------------
@@ -304,11 +330,24 @@ async def lifespan(app: FastAPI):
         db_pool.closeall()
 
 
+# With a key configured the interactive docs / schema (which list every route)
+# are switched off too; otherwise they stay available for local development.
+_private = bool(settings.api_key)
+if not _private:
+    logging.getLogger(__name__).warning(
+        "API_KEY is not set: data endpoints are publicly readable. Set API_KEY (and the "
+        "dashboard's BACKEND_API_KEY) to make the API private."
+    )
+
 app = FastAPI(
     title="AWH Station Monitoring API",
     description="API for monitoring Atmospheric Water Harvesting stations — backed by Firestore",
     version="2.0.0",
     lifespan=lifespan,
+    dependencies=[Depends(require_api_key)],
+    docs_url=None if _private else "/docs",
+    redoc_url=None if _private else "/redoc",
+    openapi_url=None if _private else "/openapi.json",
 )
 
 app.add_middleware(
@@ -342,7 +381,13 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now(timezone.utc),
-        services={"api": "online", "redis": redis_status, "firestore": fs_status, "postgres": pg_status},
+        services={
+            "api": "online",
+            "api_auth": "enforced" if settings.api_key else "open",
+            "redis": redis_status,
+            "firestore": fs_status,
+            "postgres": pg_status,
+        },
     )
 
 
@@ -1522,7 +1567,7 @@ async def get_stations_registry(
 
 
 @app.post("/stations-registry", response_model=StationRegistryItem, status_code=201, tags=["Registry"])
-async def create_station(payload: CreateStationRequest):
+async def create_station(payload: CreateStationRequest, _: None = Depends(require_admin_key)):
     """Register a new station in Firestore.
 
     Called by the RPi control panel when an operator sets up a new device.
@@ -1801,12 +1846,12 @@ async def delete_station_admin(
 
 
 @app.get("/cache/stats", tags=["Cache"])
-async def get_cache_stats():
+async def get_cache_stats(_: None = Depends(require_admin_key)):
     return cache.get_stats()
 
 
 @app.post("/cache/invalidate", tags=["Cache"])
-async def invalidate_cache(station_name: Optional[str] = None):
+async def invalidate_cache(station_name: Optional[str] = None, _: None = Depends(require_admin_key)):
     invalidate_station_cache(station_name)
     return {
         "status": "success",
@@ -1815,7 +1860,7 @@ async def invalidate_cache(station_name: Optional[str] = None):
 
 
 @app.post("/cache/flush", tags=["Cache"])
-async def flush_cache():
+async def flush_cache(_: None = Depends(require_admin_key)):
     success = cache.flush_all()
     if success:
         return {"status": "success", "message": "All cache data flushed"}

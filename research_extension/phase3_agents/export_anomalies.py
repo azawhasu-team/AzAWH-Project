@@ -20,7 +20,7 @@ Usage:
   python export_anomalies.py [--days 30] [--out ../../awh_az/water-station-dashboard/public/anomalies.json]
   python export_anomalies.py --source api --days 30     # read the live production API instead of local Postgres
 
---source api needs no database: it pages through the deployed backend's
+--source api needs no database (set AWH_API_KEY to the backend's API_KEY once the API is private): it pages through the deployed backend's
 /stations/{name}/readings (the same data the dashboard shows). Only stations that are
 active with data newer than the existing output file are re-scored; the rest are
 carried over unchanged instead of re-fetched, since the endpoint is slow (~25s per 10,000 rows).
@@ -100,9 +100,12 @@ def _ssl_context() -> ssl.SSLContext:
 
 def _api_get(path: str, params: dict | None = None, retries: int = 3):
     url = f"{API_BASE}{path}" + (("?" + urllib.parse.urlencode(params)) if params else "")
+    # The API is private: AWH_API_KEY is the backend's API_KEY.
+    key = os.getenv("AWH_API_KEY")
+    req = urllib.request.Request(url, headers={"X-API-Key": key} if key else {})
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(url, timeout=180, context=_ssl_context()) as r:
+            with urllib.request.urlopen(req, timeout=180, context=_ssl_context()) as r:
                 return json.load(r)
         except Exception:
             if attempt == retries - 1:

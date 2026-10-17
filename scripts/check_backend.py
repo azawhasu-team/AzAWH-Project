@@ -19,6 +19,7 @@ Stdlib only. Output goes to public workflow logs, so never print secrets
 import argparse
 import json
 import sys
+import os
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -31,11 +32,17 @@ HEALTH_TIMEOUT = 120
 RETRIES = 2
 
 
+def _request(url: str) -> urllib.request.Request:
+    # The data endpoints are private; /health is public and ignores the header.
+    key = os.getenv("AWH_API_KEY")
+    return urllib.request.Request(url, headers={"X-API-Key": key} if key else {})
+
+
 def fetch_json(url: str, timeout: int = HEALTH_TIMEOUT):
     last = None
     for _ in range(RETRIES + 1):
         try:
-            with urllib.request.urlopen(url, timeout=timeout) as r:
+            with urllib.request.urlopen(_request(url), timeout=timeout) as r:
                 return r.status, json.load(r)
         except urllib.error.HTTPError as e:
             return e.code, None

@@ -36,3 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 scripts/check_backend.py --mode freshness
+        env:
+          # /stations is private once the backend has API_KEY set. Add the same value
+          # as a repository secret named AWH_API_KEY (Settings > Secrets and variables > Actions).
+          AWH_API_KEY: ${{ secrets.AWH_API_KEY }}

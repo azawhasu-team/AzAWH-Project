@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.parse
 import urllib.request
@@ -46,7 +47,10 @@ MODEL_DIR = Path(__file__).parent / "models"
 def fetch_hourly_rows_live(station_name: str) -> list[dict]:
     url = f"{API_BASE}/stations/{urllib.parse.quote(station_name, safe='')}/hourly"
     print(f"Fetching {url} (full history — this can take a minute) ...", file=sys.stderr)
-    with urllib.request.urlopen(url, timeout=300) as resp:
+    # The API is private: AWH_API_KEY is the backend's API_KEY (never commit it).
+    key = os.getenv("AWH_API_KEY")
+    req = urllib.request.Request(url, headers={"X-API-Key": key} if key else {})
+    with urllib.request.urlopen(req, timeout=300) as resp:
         return json.load(resp)["data"]
 
 

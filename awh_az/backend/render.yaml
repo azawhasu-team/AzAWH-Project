@@ -12,6 +12,16 @@ services:
       - key: FIREBASE_CREDENTIALS_JSON
         sync: false
 
+      # Read key for every data endpoint (generate: openssl rand -hex 32). The
+      # dashboard's BACKEND_API_KEY must hold the same value. While unset the API
+      # is publicly readable and logs a warning at startup.
+      - key: API_KEY
+        sync: false
+      # Gates /admin/*, POST /stations-registry and /cache/*. Must match the
+      # dashboard's ADMIN_API_KEY.
+      - key: ADMIN_API_KEY
+        sync: false
+
       # Comma-separated list of allowed CORS origins (your frontend URL)
       # Example: https://your-app.vercel.app,https://awh-dashboard.onrender.com
       - key: CORS_EXTRA_ORIGINS
