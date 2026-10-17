@@ -11,7 +11,7 @@ import {
   Chip,
   Box
 } from '@mui/material';
-import { Circle as CircleIcon, Info as InfoIcon, LocationOn as LocationOnIcon } from '@mui/icons-material';
+import { Circle as CircleIcon, Info as InfoIcon, LocationOn as LocationOnIcon, WarningAmber as WarningAmberIcon } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
 import { Station } from '@/types';
 import { slugify } from '@/lib/slug';
@@ -116,6 +116,26 @@ const StationCard: React.FC<StationCardProps> = ({ station, nowMs }) => {
           <LocationOnIcon sx={{ fontSize: 14 }} />
           {station.location || 'Location Unknown'}
         </Typography>
+
+        {station.attention && (
+          <Chip
+            size="small"
+            icon={<WarningAmberIcon sx={{ fontSize: 14 }} />}
+            label={`Needs attention: ${station.attention.reason ?? 'check station'}`}
+            sx={{
+              mb: 1,
+              maxWidth: '100%',
+              height: 'auto',
+              py: 0.25,
+              fontWeight: 600,
+              fontSize: '0.7rem',
+              color: '#fff',
+              backgroundColor: station.attention.level === 'critical' ? '#c62828' : '#e65100',
+              '& .MuiChip-icon': { color: '#fff' },
+              '& .MuiChip-label': { whiteSpace: 'normal' },
+            }}
+          />
+        )}
 
         <Typography
           variant="caption"

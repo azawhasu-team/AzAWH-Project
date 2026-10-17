@@ -4,6 +4,7 @@ import {
   apiClient,
   type HourlyAggregationResponse,
   type HourlyDataRow,
+  type StationReading,
 } from '@/lib/api-client';
 import type { AnomalyFile } from '@/lib/anomalies';
 
@@ -64,6 +65,26 @@ export function useLatestReadings(stationName: string | null) {
     enabled: !!stationName,
     select: resp => resp.data,
   });
+}
+
+/**
+ * Latest readings for several stations at once. Shares a query key (and
+ * function) with useLatestReadings, so opening a station afterwards is
+ * served from cache. Pass only the stations that need it.
+ */
+export function useLatestReadingsMany(stationNames: string[]) {
+  const results = useQueries({
+    queries: stationNames.map(name => ({
+      queryKey: ['readings-latest', name],
+      queryFn: () => apiClient.getStationReadings(name, { limit: 1000 }),
+      select: (resp: { data: StationReading[] }) => resp.data,
+    })),
+  });
+  const byName: Record<string, StationReading[]> = {};
+  results.forEach((res, i) => {
+    if (res.data) byName[stationNames[i]] = res.data;
+  });
+  return byName;
 }
 
 /**

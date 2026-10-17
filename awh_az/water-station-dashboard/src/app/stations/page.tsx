@@ -3,10 +3,11 @@
 import React, { useMemo } from 'react';
 import { Typography, Box, Fade, Skeleton, Alert } from '@mui/material';
 import StationCard from '@/components/StationCard';
-import { useStations } from '@/hooks/queries';
+import { useStations, useLatestReadingsMany } from '@/hooks/queries';
 import { useFreshnessClock } from '@/hooks/useFreshnessClock';
 import { filterVisibleStations } from '@/lib/hiddenStations';
 import { isStationOnline } from '@/lib/freshness';
+import { stationAttention } from '@/lib/fleetAttention';
 
 // Fixed-max card width + auto-fit + centered justification, instead of a
 // fixed N-column grid — with online stations usually numbering 1-2, a rigid
@@ -30,21 +31,41 @@ export default function StationsPage() {
   const loading = stationsQuery.isLoading;
   const error = stationsQuery.error ? stationsQuery.error.message : null;
 
+  // Stations that should be running and are still reporting get their recent
+  // readings fetched so power problems (stuck meter, 0 W, unstable) can be
+  // spotted too. Retired/inactive stations are never fetched or flagged.
+  const watchedOnline = stations
+    .filter((s) => s.status === 'active' && isStationOnline(s.metadata.last_reading, nowMs))
+    .map((s) => s.station_name);
+  const latestReadings = useLatestReadingsMany(watchedOnline);
+
   // Online stations are listed before offline ones (a stable partition —
   // order within each group is otherwise untouched) so the stations someone
   // can actually act on aren't buried below a wall of offline cards.
   const stationCards = stations
-    .map((station) => ({
-      id: station.station_name,
-      name: station.display_name || station.station_name,
-      location: station.location || 'Arizona, USA',
-      status: (isStationOnline(station.metadata.last_reading, nowMs) ? 'Online' : 'Offline') as 'Online' | 'Offline',
-      units: [station.unit],
-      image: station.image_url || undefined,
-      description: station.description || undefined,
-      lastReading: station.metadata.last_reading,
-    }))
+    .map((station) => {
+      const attention = stationAttention({
+        expectedRunning: station.status === 'active',
+        lastReadingMs: station.metadata.last_reading ? new Date(station.metadata.last_reading).getTime() : null,
+        nowMs,
+        readings: latestReadings[station.station_name],
+      });
+      return {
+        attention: attention.level === 'ok' ? undefined : { level: attention.level, reason: attention.reason },
+        id: station.station_name,
+        name: station.display_name || station.station_name,
+        location: station.location || 'Arizona, USA',
+        status: (isStationOnline(station.metadata.last_reading, nowMs) ? 'Online' : 'Offline') as 'Online' | 'Offline',
+        units: [station.unit],
+        image: station.image_url || undefined,
+        description: station.description || undefined,
+        lastReading: station.metadata.last_reading,
+      };
+    })
     .sort((a, b) => (a.status === b.status ? 0 : a.status === 'Online' ? -1 : 1));
+  const needAttention = stationCards
+    .filter((s) => s.attention)
+    .sort((a, b) => (a.attention!.level === b.attention!.level ? 0 : a.attention!.level === 'critical' ? -1 : 1));
   const onlineStationCards = stationCards.filter((s) => s.status === 'Online');
   const offlineStationCards = stationCards.filter((s) => s.status === 'Offline');
 
@@ -102,6 +123,24 @@ export default function StationsPage() {
           Offline: {offlineStationCards.length}
         </Typography>
       </Box>
+
+      {needAttention.length > 0 && (
+        <Alert
+          severity={needAttention.some((s) => s.attention!.level === 'critical') ? 'error' : 'warning'}
+          sx={{ maxWidth: 720, mx: 'auto', mb: 4 }}
+        >
+          <strong>
+            {needAttention.length} station{needAttention.length === 1 ? ' needs' : 's need'} attention
+          </strong>
+          <Box component="ul" sx={{ m: 0, mt: 0.5, pl: 2.5 }}>
+            {needAttention.map((s) => (
+              <li key={s.id}>
+                {s.name}: {s.attention!.reason}
+              </li>
+            ))}
+          </Box>
+        </Alert>
+      )}
 
       <Typography
         variant="h6"

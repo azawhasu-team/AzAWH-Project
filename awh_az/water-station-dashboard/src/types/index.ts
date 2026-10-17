@@ -8,6 +8,8 @@ export interface Station {
   units?: string[];  // Array of unit names for this station
   hidden?: boolean;
   lastReading?: string | null;  // ISO timestamp of the newest reading, for the freshness label
+  /** Set when the station is supposed to be running but something is wrong (lib/fleetAttention.ts). */
+  attention?: { level: 'critical' | 'warning'; reason: string | null };
 }
 
 export interface StationData {
