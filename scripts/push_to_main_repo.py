@@ -13,8 +13,9 @@ Safety properties:
   * Dry run unless --apply, and --apply still asks before pushing (--yes skips).
   * Files come from `git ls-files`, so .gitignore is honoured, and a hard
     exclude list (secrets, .env*, node_modules, build output) applies on top.
-  * Never deletes anything in the main repo; files that exist only there are
-    reported and left alone.
+  * Never deletes anything in the main repo unless --delete is given; files that
+    exist only there are always reported (a leftover file can break a deploy,
+    e.g. an old middleware.ts next to proxy.ts fails the Next.js 16 build).
   * Never creates a new top-level folder in the main repo unless asked
     (--allow-new-top-level).
   * No Co-Authored-By trailer is added to the commit message.
@@ -109,6 +110,27 @@ def plan(root: Path, clone: Path, files: list[str], allow_new_top_level: bool = 
     return res
 
 
+def remote_only(root: Path, clone: Path, files: list[str], only=None) -> list[str]:
+    """Files tracked in the main repo that have no local counterpart.
+
+    Limited to directories that also exist locally (so main-repo-only areas are
+    ignored), honours --only, and skips anything the safety rules exclude.
+    """
+    local = set(files)
+    out = []
+    for rel in _git_files(clone):
+        if rel in local or exclusion_reason(rel):
+            continue
+        if only and not any(rel.startswith(p) for p in only):
+            continue
+        if (root / rel).exists():  # present locally but ignored/filtered: not a deletion
+            continue
+        if not (root / rel).parent.exists():
+            continue
+        out.append(rel)
+    return sorted(out)
+
+
 def _run(cmd, cwd=None, **kw):
     return subprocess.run(cmd, cwd=cwd, check=True, **kw)
 
@@ -124,6 +146,8 @@ def main(argv=None) -> int:
                     help="also copy top-level folders/files that don't exist in the main repo yet")
     ap.add_argument("--only", action="append", metavar="PREFIX",
                     help="restrict to paths starting with PREFIX (repeatable)")
+    ap.add_argument("--delete", action="store_true",
+                    help="also delete the main-repo-only files listed in the plan")
     ap.add_argument("--verbose", action="store_true", help="list excluded files and main-repo-only files")
     args = ap.parse_args(argv)
 
@@ -141,6 +165,7 @@ def main(argv=None) -> int:
             files = [f for f in files if any(f.startswith(p) for p in args.only)]
         res = plan(REPO_ROOT, clone, files, args.allow_new_top_level)
         to_copy = res["changed"] + res["new"]
+        stale = remote_only(REPO_ROOT, clone, files, args.only)
 
         print(f"\nChanged: {len(res['changed'])}   New: {len(res['new'])}   "
               f"Unchanged/other: {len(files) - len(to_copy) - len(res['excluded']) - len(res['too_big'])}")
@@ -153,6 +178,11 @@ def main(argv=None) -> int:
         if res["skipped_top"]:
             print("\nSkipped (top-level not in main repo; use --allow-new-top-level): "
                   + ", ".join(sorted(res["skipped_top"])))
+        if stale:
+            print(f"\nOnly in the main repo ({len(stale)}), no local counterpart"
+                  + ("; will be DELETED" if args.delete else "; left alone, use --delete to remove") + ":")
+            for f in stale:
+                print(f"  D? {f}")
         secrets = sorted(f for f, why in res["excluded"].items() if "excluded pattern" in why)
         print(f"\nExcluded by safety rules: {len(res['excluded'])}"
               + (f"  (incl. {len(secrets)} secret-looking file(s))" if secrets else ""))
@@ -164,7 +194,8 @@ def main(argv=None) -> int:
             print("\nNOTE: backend files changed; Render redeploys from the main repo on push. "
                   "Verify with /health and /openapi.json afterwards.")
 
-        if not to_copy:
+        to_delete = stale if args.delete else []
+        if not to_copy and not to_delete:
             print("\nMain repo is already up to date. Nothing to do.")
             return 0
         if not args.apply:
@@ -175,12 +206,15 @@ def main(argv=None) -> int:
             dst = clone / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(REPO_ROOT / rel, dst)
-        _run(["git", "add", "--"] + to_copy, cwd=clone)
+        if to_copy:
+            _run(["git", "add", "--"] + to_copy, cwd=clone)
+        if to_delete:
+            _run(["git", "rm", "--quiet", "--"] + to_delete, cwd=clone)
         _run(["git", "commit", "--quiet", "-m", args.message], cwd=clone)
         _run(["git", "show", "--stat", "--format=%h %s", "HEAD"], cwd=clone)
 
         if not args.yes:
-            ans = input(f"\nPush {len(to_copy)} file(s) to {args.repo_url} ({args.branch})? [y/N] ")
+            ans = input(f"\nPush {len(to_copy)} changed + {len(to_delete)} deleted file(s) to {args.repo_url} ({args.branch})? [y/N] ")
             if ans.strip().lower() != "y":
                 print("Aborted. Nothing was pushed.")
                 return 1

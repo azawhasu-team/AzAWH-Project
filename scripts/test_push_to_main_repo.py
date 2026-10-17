@@ -86,3 +86,19 @@ def test_plan_skips_oversized(tmp_path, monkeypatch):
 def test_apply_requires_message():
     with pytest.raises(SystemExit):
         p.main(["--apply"])
+
+
+def test_remote_only_flags_leftover_files(tmp_path):
+    root, clone = tmp_path / "local", tmp_path / "clone"
+    for base in (root, clone):
+        (base / "app" / "src").mkdir(parents=True)
+    (clone / "app" / "src" / "middleware.ts").write_text("old")
+    (clone / "app" / "src" / "proxy.ts").write_text("new")
+    (clone / "only_remote_dir").mkdir()
+    (clone / "only_remote_dir" / "x.py").write_text("x")
+    (root / "app" / "src" / "proxy.ts").write_text("new")
+    import subprocess
+    subprocess.run(["git", "init", "-q"], cwd=clone, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=clone, check=True)
+    stale = p.remote_only(root, clone, ["app/src/proxy.ts"])
+    assert stale == ["app/src/middleware.ts"]
