@@ -20,6 +20,7 @@ vi.mock('@/hooks/queries', () => ({
   useStationReadingsRange: () => ({ query: { data: undefined, isFetching: false }, progress: 0 }),
   useHourly: () => ({ data: [], isFetching: false }),
   useAnomalies: () => ({ data: null }),
+  useStationQuality: () => ({ data: undefined, isLoading: false, isError: false }),
 }));
 
 import StationPage from './page';

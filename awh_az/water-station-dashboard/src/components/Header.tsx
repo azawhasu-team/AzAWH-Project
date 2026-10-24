@@ -29,6 +29,7 @@ const NAV_LINKS: { label: string; href: string; prefetch?: boolean }[] = [
   { label: 'Home', href: '/' },
   { label: 'Stations', href: '/stations' },
   { label: 'Compare', href: '/compare' },
+  { label: 'Envelope', href: '/envelope' },
   { label: 'About', href: '/about' },
   { label: 'Contact', href: '/contact' },
   // prefetch=false — this route is gated by the admin passphrase; prefetching it while

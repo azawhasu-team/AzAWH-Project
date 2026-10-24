@@ -16,6 +16,7 @@ import { useRouter } from 'next/navigation';
 import { Station } from '@/types';
 import { slugify } from '@/lib/slug';
 import { freshnessOf, formatAge } from '@/lib/freshness';
+import DataQualityBadge from '@/components/DataQualityBadge';
 
 interface StationCardProps {
   station: Station;
@@ -145,6 +146,10 @@ const StationCard: React.FC<StationCardProps> = ({ station, nowMs }) => {
           <span style={{ color: fresh.color }}>{fresh.label}</span>
           {fresh.ageSec != null && <span>· last reading {formatAge(fresh.ageSec)}</span>}
         </Typography>
+
+        <Box sx={{ mb: 1 }}>
+          <DataQualityBadge stationName={String(station.id)} lastReading={station.lastReading} nowMs={nowMs} />
+        </Box>
 
 
         <Typography

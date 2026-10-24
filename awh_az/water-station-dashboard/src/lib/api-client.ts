@@ -104,6 +104,14 @@ export interface ImpactResponse {
   updated_at?: string | null;
 }
 
+/** An API error that remembers the HTTP status, so callers can tell "no data" (404) from a real failure. */
+export class ApiStatusError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = 'ApiStatusError';
+  }
+}
+
 class APIClient {
   private baseURL: string;
 
@@ -137,8 +145,9 @@ class APIClient {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(
-          errorData.detail || `HTTP ${response.status}: ${response.statusText}`
+        throw new ApiStatusError(
+          errorData.detail || `HTTP ${response.status}: ${response.statusText}`,
+          response.status
         );
       }
 
@@ -146,6 +155,9 @@ class APIClient {
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new Error('Request timed out');
+      }
+      if (error instanceof ApiStatusError) {
+        throw new ApiStatusError(`API Error: ${error.message}`, error.status);
       }
       if (error instanceof Error) {
         throw new Error(`API Error: ${error.message}`);
@@ -161,6 +173,17 @@ class APIClient {
    */
   async getImpact(): Promise<ImpactResponse> {
     return this.fetch<ImpactResponse>('/impact');
+  }
+
+  /** Daily data-quality scores (0-100) plus the station's calibration events. */
+  async getStationQuality(stationName: string, days = 7): Promise<StationQualityResponse> {
+    return this.fetch<StationQualityResponse>(
+      `/stations/${encodeURIComponent(stationName)}/quality?days=${days}`
+    );
+  }
+
+  async getStationCalibrations(stationName: string): Promise<CalibrationEvent[]> {
+    return this.fetch<CalibrationEvent[]>(`/stations/${encodeURIComponent(stationName)}/calibrations`);
   }
 
   /**
@@ -339,6 +362,37 @@ class APIClient {
 
     return this.fetch<HourlyAggregationResponse>(endpoint);
   }
+}
+
+export interface QualityIssue {
+  sensor: string;
+  kind: 'frozen' | 'dead' | 'range';
+  detail: string;
+}
+
+export interface DailyQuality {
+  date: string; // station-local (Phoenix) day, YYYY-MM-DD
+  score: number;
+  label: 'good' | 'fair' | 'poor';
+  coverage_pct: number;
+  hours_with_data: number;
+  expected_hours: number;
+  issues: QualityIssue[];
+}
+
+export interface CalibrationEvent {
+  id: string;
+  station_name: string;
+  date: string; // YYYY-MM-DD
+  sensor: string;
+  note?: string;
+  created_at?: string;
+}
+
+export interface StationQualityResponse {
+  station_name: string;
+  days: DailyQuality[];
+  calibrations: CalibrationEvent[];
 }
 
 export interface HourlyDataRow {

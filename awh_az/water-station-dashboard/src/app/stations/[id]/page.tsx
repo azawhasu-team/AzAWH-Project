@@ -40,6 +40,7 @@ import {
 } from '@/lib/stationFields';
 import { stationPowerState } from '@/lib/stationPower';
 import AlertsPanel from '@/components/AlertsPanel';
+import DataQualityPanel from '@/components/DataQualityPanel';
 import { detectPowerStatus } from '@/lib/powerStatus';
 import { reportingAlert, stationOffAlert, powerAlerts, anomalyAlerts, splitAlerts, type StationAlert } from '@/lib/alerts';
 import { convertLiters, convertSpecificEnergy, UNIT_LABEL, type VolumeUnit } from '@/lib/compareMath';
@@ -932,6 +933,8 @@ export default function StationDetails() {
           the earliest part of the range. Pick a narrower date range to see the rest.
         </Alert>
       )}
+
+      {stationName && <DataQualityPanel stationName={stationName} />}
 
       <AlertsPanel
         active={alertsActive}

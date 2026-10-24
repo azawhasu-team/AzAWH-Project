@@ -47,6 +47,24 @@ class Settings(BaseSettings):
     api_key: str = ""
     firebase_storage_bucket: str = ""
 
+    # Alert notifications (POST /admin/alerts/evaluate). With no channel
+    # configured, alerts are only logged. public_base_url is this API's own
+    # public address, used to build the one-click acknowledge/snooze links.
+    public_base_url: str = ""
+    alert_link_secret: str = ""  # signs those links; falls back to admin_api_key
+    alert_slack_webhook_url: str = ""
+    alert_smtp_host: str = ""
+    alert_smtp_port: int = 587
+    alert_smtp_user: str = ""
+    alert_smtp_password: str = ""
+    alert_email_from: str = ""
+    alert_email_to: str = ""  # comma-separated
+    alert_stale_minutes: float = 120
+    alert_reminder_hours: float = 12
+    alert_lookback_days: float = 7  # a station that reported this recently is expected to be live
+    alert_quality_threshold: int = 60
+    alert_expected_live: str = ""  # optional JSON {"station": max_silent_minutes}
+
     # Data Configuration
     max_query_limit: int = 10000
     default_page_size: int = 100

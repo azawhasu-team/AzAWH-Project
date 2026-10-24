@@ -130,7 +130,7 @@ export function buildChartSeries(
 
   // Harvesting efficiency (%) per reading
   // Formula: incremental_water_g / (abs_humidity × velocity_mps × intake area × Δt_s) × 100
-  const effMap = new Map<string, number>();
+  const effMap = new Map<string, number | null>();
   filteredReadings.forEach((r, i) => {
     const absH = typeof r.temperature === 'number' && typeof r.humidity === 'number'
       ? computeAbsHumidity(r.temperature, r.humidity) : null;
@@ -144,10 +144,15 @@ export function buildChartSeries(
       const dtS = Math.min(dtMs / 1000, 120); // cap at 2 min to avoid gaps inflating result
       const velMps = velocityToMps(vel, r.unit);
       const intakeWaterG = absH * velMps * intakeAreaM2 * dtS;
-      const eff = intakeWaterG > 0 ? Math.min((incW / intakeWaterG) * 100, 100) : 0;
-      effMap.set(r.timestamp, Math.round(eff * 10000) / 10000);
+      // No water captured this interval → not producing, so a gap rather than 0%.
+      if (incW > 0 && intakeWaterG > 0) {
+        const eff = Math.min((incW / intakeWaterG) * 100, 100);
+        effMap.set(r.timestamp, Math.round(eff * 10000) / 10000);
+      } else {
+        effMap.set(r.timestamp, null);
+      }
     } else {
-      effMap.set(r.timestamp, 0);
+      effMap.set(r.timestamp, null);
     }
   });
 
@@ -164,7 +169,7 @@ export function buildChartSeries(
     if (field === 'accumulated_water_L') return accWaterMap.get(reading.timestamp) ?? 0;
     if (field === 'incremental_water_g') return incWaterMap.get(reading.timestamp) ?? 0;
     if (field === 'incremental_energy_kWh') return incEnergyMap.get(reading.timestamp) ?? null;
-    if (field === 'harvesting_efficiency') return effMap.get(reading.timestamp) ?? 0;
+    if (field === 'harvesting_efficiency') return effMap.get(reading.timestamp) ?? null;
     if (field === 'energy') {
       // Already kWh at the source. Values above ENERGY_SANITY_CEILING_KWH are
       // known-corrupt and plotted as a gap rather than a wildly-wrong number.

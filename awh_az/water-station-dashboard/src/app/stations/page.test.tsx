@@ -8,7 +8,11 @@ const h = vi.hoisted(() => ({
   readings: {} as Record<string, unknown[]>,
 }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
-vi.mock('@/hooks/queries', () => ({ useStations: () => h.q, useLatestReadingsMany: () => h.readings }));
+vi.mock('@/hooks/queries', () => ({
+  useStations: () => h.q,
+  useLatestReadingsMany: () => h.readings,
+  useStationQuality: () => ({ data: undefined }),
+}));
 vi.mock('@/hooks/useFreshnessClock', () => ({ useFreshnessClock: () => Date.now() }));
 
 import StationsPage from './page';

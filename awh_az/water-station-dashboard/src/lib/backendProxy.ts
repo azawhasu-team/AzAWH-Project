@@ -52,7 +52,11 @@ export async function forwardToBackend(
   if (!allowed) return refuse(405, 'Method not allowed');
 
   const url = new URL(request.url);
-  const target = `${deps.backendUrl.replace(/\/+$/, '')}/${segments.join('/')}${url.search}`;
+  // Re-encode each segment: Next hands catch-all params over decoded, and a
+  // station name such as "AquaPars #2 @Power Station, Tempe" would otherwise
+  // be cut off at the "#" (or "?") and silently 404.
+  const path = (decoded as string[]).map(encodeURIComponent).join('/');
+  const target = `${deps.backendUrl.replace(/\/+$/, '')}/${path}${url.search}`;
 
   const headers = new Headers();
   for (const h of FORWARDED_REQUEST_HEADERS) {

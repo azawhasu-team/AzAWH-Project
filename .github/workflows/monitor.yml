@@ -7,6 +7,7 @@ on:
   schedule:
     - cron: '*/10 * * * *'   # uptime check + keep-alive (Render free tier sleeps when idle)
     - cron: '17 */6 * * *'   # station freshness (every 6h, to limit repeat emails during an outage)
+    - cron: '7,37 * * * *'   # alert evaluation: Slack/email notifications with ack + snooze
   workflow_dispatch:
     inputs:
       force_fail:
@@ -40,3 +41,15 @@ jobs:
           # /stations is private once the backend has API_KEY set. Add the same value
           # as a repository secret named AWH_API_KEY (Settings > Secrets and variables > Actions).
           AWH_API_KEY: ${{ secrets.AWH_API_KEY }}
+
+  alerts:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '7,37 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/trigger_alerts.py
+        env:
+          # Repository secret AWH_ADMIN_KEY = the backend's ADMIN_API_KEY. Without it this job fails
+          # (loudly) rather than silently never alerting.
+          AWH_ADMIN_KEY: ${{ secrets.AWH_ADMIN_KEY }}

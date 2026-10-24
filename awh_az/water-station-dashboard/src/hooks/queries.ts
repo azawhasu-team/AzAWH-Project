@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { useQuery, useQueries, keepPreviousData, type UseQueryResult } from '@tanstack/react-query';
 import {
   apiClient,
+  ApiStatusError,
   type HourlyAggregationResponse,
   type HourlyDataRow,
   type StationReading,
@@ -134,7 +135,7 @@ function hourlyQueryOptions(stationName: string | null, startISO?: string, endIS
           end_date: endISO,
         });
       } catch (err) {
-        if (err instanceof Error && err.message.includes('HTTP 404')) {
+        if (err instanceof ApiStatusError && err.status === 404) {
           return {
             station_name: stationName!,
             start_date: startISO ?? null,
@@ -221,5 +222,25 @@ export function useAnomalies() {
     },
     staleTime: 60 * 60_000,
     retry: false,
+  });
+}
+
+/** Daily data-quality scores. Cheap (a few days of hourly data) but only meaningful for stations that reported recently. */
+export function useStationQuality(stationName: string | null, days = 7, enabled = true) {
+  return useQuery({
+    queryKey: ['quality', stationName, days],
+    queryFn: () => apiClient.getStationQuality(stationName!, days),
+    enabled: !!stationName && enabled,
+    staleTime: 10 * 60_000,
+    retry: 1,
+  });
+}
+
+export function useCalibrations(stationName: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['calibrations', stationName],
+    queryFn: () => apiClient.getStationCalibrations(stationName!),
+    enabled: !!stationName && enabled,
+    staleTime: 5 * 60_000,
   });
 }

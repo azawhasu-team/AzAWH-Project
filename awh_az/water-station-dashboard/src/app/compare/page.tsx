@@ -56,6 +56,7 @@ import { useStations, useHourlyMany, type HourlyRequest } from '@/hooks/queries'
 import { useFreshnessClock } from '@/hooks/useFreshnessClock';
 import { formatPhoenixMonthDayTime } from '@/lib/timezone';
 import { filterVisibleStations } from '@/lib/hiddenStations';
+import { mayHaveDataSince } from '@/lib/stationData';
 import { freshnessOf, formatAge, isStationOnline } from '@/lib/freshness';
 import {
   type Measurement,
@@ -378,7 +379,9 @@ export default function ComparePage() {
   // down to the hour so the query key is stable and revisits hit the cache.
   const tableWindowStartISO = hourFloorISO(nowMs - WINDOW_DAYS * DAY_MS);
   const tableQuery = useHourlyMany(
-    stations.map((s) => ({ key: s.station_name, stationName: s.station_name, start: tableWindowStartISO })),
+    stations
+      .filter((s) => mayHaveDataSince(s, tableWindowStartISO))
+      .map((s) => ({ key: s.station_name, stationName: s.station_name, start: tableWindowStartISO })),
     stations.length > 0
   );
 
@@ -467,7 +470,9 @@ export default function ComparePage() {
       if (alignMode === 'same-time') {
         // Identical bounds for every station — the rigorous apples-to-apples
         // comparison, at the cost of showing nothing for a station that
-        // wasn't running in this window.
+        // wasn't running in this window. Stations known to have stopped
+        // before the window are skipped instead of asked for a 404.
+        if (!mayHaveDataSince(station, rangeStartISO)) continue;
         reqs.push({
           key: station.station_name,
           stationName: station.station_name,
@@ -500,11 +505,14 @@ export default function ComparePage() {
   // "Compare months": one hourly query per selected month of the chosen station.
   const monthRequests: HourlyRequest[] = useMemo(
     () =>
-      selectedMonths.map((key) => {
+      selectedMonths.flatMap((key) => {
         const { start, end } = monthRangeISO(key);
-        return { key, stationName: monthStationName, start, end };
+        const station = stations.find((s) => s.station_name === monthStationName);
+        // A month that began after the station's last reading has no data.
+        if (station && !mayHaveDataSince(station, start)) return [];
+        return [{ key, stationName: monthStationName, start, end }];
       }),
-    [selectedMonths, monthStationName]
+    [selectedMonths, monthStationName, stations]
   );
   const monthlyQuery = useHourlyMany(monthRequests, compareMode === 'months' && !!monthStationName);
   const monthlyHourly = monthlyQuery.byKey;

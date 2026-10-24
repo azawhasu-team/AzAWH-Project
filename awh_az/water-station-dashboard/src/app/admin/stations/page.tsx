@@ -30,6 +30,7 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { apiClient, type StationInfo, type StationMetadata } from '@/lib/api-client';
+import CalibrationManager from '@/components/CalibrationManager';
 import StationDataDownload from '@/components/StationDataDownload';
 
 // A station fresh from POST /admin/stations (or any station that hasn't
@@ -76,6 +77,7 @@ export default function AdminStationsPage() {
   const [saveStatus, setSaveStatus] = useState<Record<string, SaveStatus>>({});
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
   const [downloadOpen, setDownloadOpen] = useState<Record<string, boolean>>({});
+  const [calibrationOpen, setCalibrationOpen] = useState<Record<string, boolean>>({});
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -467,6 +469,23 @@ export default function AdminStationsPage() {
                   </Box>
                 </Box>
               </Box>
+
+              <Divider sx={{ my: 2.5 }} />
+              <Button
+                size="small"
+                endIcon={calibrationOpen[station.station_name] ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                onClick={() =>
+                  setCalibrationOpen((prev) => ({ ...prev, [station.station_name]: !prev[station.station_name] }))
+                }
+                sx={{ textTransform: 'none', fontWeight: 600 }}
+              >
+                Calibrations
+              </Button>
+              <Collapse in={!!calibrationOpen[station.station_name]} unmountOnExit>
+                <Box sx={{ mt: 2 }}>
+                  <CalibrationManager stationName={station.station_name} />
+                </Box>
+              </Collapse>
 
               {station.metadata && (
                 <>

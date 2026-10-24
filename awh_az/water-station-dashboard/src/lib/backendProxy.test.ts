@@ -42,6 +42,15 @@ describe('forwardToBackend', () => {
     expect(f).not.toHaveBeenCalled();
   });
 
+  it('keeps "#", "?" and spaces inside a station name when forwarding', async () => {
+    const f = upstreamOk();
+    // Next gives catch-all params decoded; a raw "#" would truncate the URL.
+    await forwardToBackend(req('x'), ['stations', 'station_AquaPars #2 @Power Station, Tempe', 'hourly'], { ...base, fetchImpl: f });
+    const url = (f.mock.calls[0] as unknown as [string])[0];
+    expect(url).toContain('/stations/station_AquaPars%20%232%20%40Power%20Station%2C%20Tempe/hourly');
+    expect(url).not.toContain('#');
+  });
+
   it('rejects traversal and malformed segments', async () => {
     const f = upstreamOk();
     for (const segs of [['stations', '..', 'admin'], ['stations', '%2e%2e', 'admin'], ['stations', '%5C'], ['stations', '%E0%A4%A']]) {

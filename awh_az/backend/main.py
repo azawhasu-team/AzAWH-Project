@@ -1,12 +1,13 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Header, UploadFile, File, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.concurrency import run_in_threadpool
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 import hmac
+import html
 import itertools
 import json
 import io
@@ -44,6 +45,9 @@ from models import (
 from config import settings
 from cache import cache, get_stations_cache_key, get_station_readings_cache_key, invalidate_station_cache
 from logging_config import RequestLoggingMiddleware, setup_logging
+import alerting
+import calibrations
+import quality
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -1181,7 +1185,10 @@ def _compute_hourly_aggregation_sync(
                     noise_floor_g = WEIGHT_NOISE_FLOOR_G
                 if delta_w >= noise_floor_g:
                     water_delta_by_hour[hour_key] += delta_w
-                if delta_w > 0:
+                    # Efficiency's numerator must use the same noise-floored
+                    # delta as water_produced_g; otherwise balance jitter
+                    # (a few tenths of a gram) against a tiny intake-available
+                    # value clamps to 100% in hours with ~0 L/h produced.
                     captured_g_by_hour[hour_key] += delta_w
             last_valid_weight = cur_w
             last_valid_weight_ts = cur_ts
@@ -1399,10 +1406,12 @@ def _compute_hourly_aggregation_sync(
 
         row["intake_available_water_g_hourly"] = round(intake_available_g, 4) if intake_available_g > 0 else None
         row["water_captured_g_hourly"] = round(captured_g, 4) if captured_g > 0 else 0.0
-        if intake_available_g > 0:
+        if captured_g > 0 and intake_available_g > 0:
             row["harvesting_efficiency_pct_hourly"] = round(min((captured_g / intake_available_g) * 100.0, 100.0), 4)
         else:
-            row["harvesting_efficiency_pct_hourly"] = 0.0
+            # No water captured (or no valid intake data) → station isn't
+            # producing; excluded (None), not reported as 0% efficiency.
+            row["harvesting_efficiency_pct_hourly"] = None
         if water_hour_excluded:
             # Same hour excluded from efficiency, not reported as 0%.
             row["water_captured_g_hourly"] = None
@@ -1866,6 +1875,195 @@ async def flush_cache(_: None = Depends(require_admin_key)):
         return {"status": "success", "message": "All cache data flushed"}
     raise HTTPException(status_code=500, detail="Failed to flush cache")
 
+
+
+# ---------------------------------------------------------------------------
+# Data quality
+# ---------------------------------------------------------------------------
+QUALITY_CACHE_TTL_SECONDS = 600
+
+
+def _quality_sync(station_name: str, days: int) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    result = _compute_hourly_aggregation_sync(station_name, now - timedelta(days=days), now)
+    if not result:
+        return []
+    return quality.daily_quality(result["data"], now)
+
+
+@app.get("/stations/{station_name}/quality", tags=["Analytics"])
+async def get_station_quality(station_name: str, days: int = Query(7, ge=1, le=60)):
+    """Daily data-quality score (0-100) per local day, newest last: hour
+    coverage minus penalties for frozen/dead/out-of-range sensors. Includes the
+    station's calibration dates so a step change can be told from drift."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not initialised")
+    key = f"quality:{station_name}:{days}"
+    cached = cache.get(key)
+    if cached:
+        return cached
+    daily = await run_in_threadpool(_quality_sync, station_name, days)
+    events = await run_in_threadpool(calibrations.list_events, db, station_name)
+    result = {"station_name": station_name, "days": daily, "calibrations": events[:20]}
+    cache.set(key, result, ttl=QUALITY_CACHE_TTL_SECONDS)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Calibration log
+# ---------------------------------------------------------------------------
+@app.get("/stations/{station_name}/calibrations", tags=["Calibration"])
+async def list_station_calibrations(station_name: str):
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not initialised")
+    return await run_in_threadpool(calibrations.list_events, db, station_name)
+
+
+@app.post("/admin/stations/{station_name}/calibrations", status_code=201, tags=["Admin"])
+async def add_station_calibration(
+    station_name: str, payload: dict, _: None = Depends(require_admin_key)
+):
+    """Record a recalibration / sensor replacement: {date, sensor, note?}."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not initialised")
+    if not _station_doc_id_exists(db.collection(settings.firestore_collection), station_name):
+        raise HTTPException(status_code=404, detail=f"Station '{station_name}' not found")
+    try:
+        event = await run_in_threadpool(calibrations.add_event, db, station_name, payload)
+    except calibrations.CalibrationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    cache.delete_pattern(f"quality:{station_name}:*")
+    return event
+
+
+@app.delete("/admin/calibrations/{event_id}", tags=["Admin"])
+async def delete_calibration(event_id: str, _: None = Depends(require_admin_key)):
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not initialised")
+    if not await run_in_threadpool(calibrations.delete_event, db, event_id):
+        raise HTTPException(status_code=404, detail="Calibration event not found")
+    cache.delete_pattern("quality:*")
+    return {"deleted": event_id}
+
+
+# ---------------------------------------------------------------------------
+# Alert notifications (Slack / email) with acknowledge + snooze
+# ---------------------------------------------------------------------------
+def _latest_complete_day(name: str) -> Optional[dict]:
+    """Yesterday's (or the latest finished day's) quality entry, if any."""
+    today_local = datetime.now(timezone.utc).astimezone(quality.STATION_TZ).date().isoformat()
+    done = [d for d in _quality_sync(name, 3) if d["date"] < today_local]
+    return done[-1] if done else None
+
+
+def _alert_overrides() -> dict:
+    if not settings.alert_expected_live:
+        return {}
+    try:
+        return {k: float(v) for k, v in json.loads(settings.alert_expected_live).items()}
+    except (ValueError, TypeError, AttributeError):
+        logger.warning("ALERT_EXPECTED_LIVE is not valid JSON {name: minutes}; ignoring it")
+        return {}
+
+
+def _link_secret() -> str:
+    return settings.alert_link_secret or settings.admin_api_key
+
+
+def _evaluate_alerts_sync(stations: list[dict], dry_run: bool) -> dict:
+    now = datetime.now(timezone.utc)
+    explicit = _alert_overrides()
+    live = alerting.expected_live(stations, now, settings.alert_lookback_days, explicit)
+    with ThreadPoolExecutor(max_workers=min(len(live), 8) or 1) as ex:
+        qs = dict(zip(live, ex.map(lambda n: _safe(_latest_complete_day, n), live)))
+    active = alerting.evaluate(
+        stations, {k: v for k, v in qs.items() if v}, now,
+        stale_minutes=settings.alert_stale_minutes, lookback_days=settings.alert_lookback_days,
+        explicit=explicit, quality_threshold=settings.alert_quality_threshold,
+    )
+    previous = alerting.load_state(db)
+    notes, new_state = alerting.plan(active, previous, now, settings.alert_reminder_hours)
+    sent = []
+    for kind, alert in notes:
+        if dry_run:
+            sent.append({"kind": kind, "id": alert["id"], "title": alert["title"], "channels": {"dry_run": "not sent"}})
+        else:
+            sent.append({"kind": kind, "id": alert["id"], "title": alert["title"], **alerting.deliver(settings, kind, alert, now)})
+    if not dry_run:
+        alerting.save_state(db, new_state, previous)
+    return {
+        "checked_at": now.isoformat(),
+        "expected_live": sorted(live),
+        "active": [a.__dict__ for a in active],
+        "notifications": sent,
+        "dry_run": dry_run,
+    }
+
+
+def _safe(fn, *args):
+    try:
+        return fn(*args)
+    except Exception as e:  # noqa: BLE001 - one broken station must not stop the whole run
+        logger.warning("%s failed for %s: %s", fn.__name__, args, e)
+        return None
+
+
+@app.post("/admin/alerts/evaluate", tags=["Alerts"])
+async def evaluate_alerts(dry_run: bool = False, _: None = Depends(require_admin_key)):
+    """Evaluate fleet alerts and notify (new / reminder / escalated / resolved).
+    Meant to be called on a schedule; safe to call repeatedly."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not initialised")
+    stations = await get_stations()
+    stations = [s if isinstance(s, dict) else s.dict() for s in stations]
+    return await run_in_threadpool(_evaluate_alerts_sync, stations, dry_run)
+
+
+@app.get("/admin/alerts", tags=["Alerts"])
+async def list_alert_state(_: None = Depends(require_admin_key)):
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not initialised")
+    state = await run_in_threadpool(alerting.load_state, db)
+    return sorted(state.values(), key=lambda e: e.get("first_seen", ""), reverse=True)
+
+
+def _apply_alert_action(alert_id: str, action: str, hours: Optional[int]) -> dict:
+    state = alerting.load_state(db)
+    entry = state.get(alert_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Unknown alert")
+    try:
+        updated = alerting.apply_action(entry, action, datetime.now(timezone.utc), hours)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    alerting.save_state(db, {alert_id: updated}, state)
+    return updated
+
+
+@app.post("/admin/alerts/{action}", tags=["Alerts"])
+async def alert_action_api(action: str, payload: dict, _: None = Depends(require_admin_key)):
+    """Acknowledge or snooze: POST /admin/alerts/ack or /snooze with {id, hours?}."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not initialised")
+    return await run_in_threadpool(_apply_alert_action, str(payload.get("id", "")), action, payload.get("hours"))
+
+
+@app.get("/admin/alerts-action", tags=["Alerts"], response_class=HTMLResponse)
+async def alert_action_link(token: str):
+    """One-click acknowledge/snooze from a Slack or email link. Authorised by the
+    signed, expiring token itself (no key needed), so it only does what the
+    token says."""
+    payload = alerting.verify_token(_link_secret(), token, datetime.now(timezone.utc))
+    if not payload:
+        return HTMLResponse("<h3>This link is invalid or has expired.</h3>", status_code=400)
+    if not db:
+        return HTMLResponse("<h3>Service unavailable, try again shortly.</h3>", status_code=503)
+    try:
+        entry = await run_in_threadpool(_apply_alert_action, payload["a"], payload["x"], payload.get("h"))
+    except HTTPException as e:
+        return HTMLResponse(f"<h3>{html.escape(str(e.detail))}</h3>", status_code=e.status_code)
+    what = "acknowledged" if payload["x"] == "ack" else f"snoozed for {payload['h']} h"
+    return HTMLResponse(f"<h3>Done: alert {what}.</h3><p>{html.escape(entry.get('title', ''))}</p>")
 
 # ---------------------------------------------------------------------------
 # Run
