@@ -41,6 +41,7 @@ import {
 import { stationPowerState } from '@/lib/stationPower';
 import AlertsPanel from '@/components/AlertsPanel';
 import DataQualityPanel from '@/components/DataQualityPanel';
+import WeatherPanel from '@/components/WeatherPanel';
 import { detectPowerStatus } from '@/lib/powerStatus';
 import { reportingAlert, stationOffAlert, powerAlerts, anomalyAlerts, splitAlerts, type StationAlert } from '@/lib/alerts';
 import { convertLiters, convertSpecificEnergy, UNIT_LABEL, type VolumeUnit } from '@/lib/compareMath';
@@ -408,6 +409,16 @@ export default function StationDetails() {
   // Totals for the selected date period — summed from the hourly aggregation rather than
   // averaging per-hour ratios, so a mostly-idle period doesn't skew the energy/liter figure.
   const periodTotalWaterL = hourlyRows.reduce((sum, r) => sum + (r.water_produced_L ?? 0), 0);
+  // Same period total, but from the flow meter (measured flow integrated over time)
+  const periodTotalFlowWaterL = hourlyRows.reduce((sum, r) => sum + (r.water_produced_flow_L ?? 0), 0);
+  const hasFlowWater = hourlyRows.some(r => r.water_produced_flow_L != null);
+  const latestFlowWaterL = (() => {
+    for (let i = hourlyRows.length - 1; i >= 0; i--) {
+      const v = hourlyRows[i].water_produced_flow_L;
+      if (v != null) return v;
+    }
+    return null;
+  })();
   const periodTotalEnergyKWh = hourlyRows.reduce((sum, r) => sum + (r.energy_consumed_kWh ?? 0), 0);
   const periodEnergyPerLiter = periodTotalWaterL > 0 ? periodTotalEnergyKWh / periodTotalWaterL : null;
 
@@ -441,6 +452,8 @@ export default function StationDetails() {
     .map(r => ({ date: r.hour, value: typeof r.energy_per_liter_kWh_L === 'number' ? convertSpecificEnergy(r.energy_per_liter_kWh_L, volumeUnit) : null }));
   const hourlyWaterProductionData: ChartDataPoint[] = hourlyRows
     .map(r => ({ date: r.hour, value: typeof r.water_produced_L === 'number' ? convertLiters(r.water_produced_L, volumeUnit) : null }));
+  const hourlyFlowWaterProductionData: ChartDataPoint[] = hourlyRows
+    .map(r => ({ date: r.hour, value: typeof r.water_produced_flow_L === 'number' ? convertLiters(r.water_produced_flow_L, volumeUnit) : null }));
   
   return (
     <Box sx={{ px: { xs: 2, sm: 3, md: 4 }, py: 4, maxWidth: '1600px', mx: 'auto' }}>
@@ -684,10 +697,11 @@ export default function StationDetails() {
           {liveReading && (
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(auto-fit, minmax(140px, 1fr))' }, gap: 2 }}>
               {[
-                { key: 'water_total', label: 'Total Water Produced', value: hourlyRows.length > 0 ? convertLiters(periodTotalWaterL, volumeUnit) : null, unit: UNIT_LABEL[volumeUnit], decimals: volumeUnit === 'acre-ft' ? 6 : 2, requires: ['weight'], subLabel: null as string | null },
+                { key: 'water_total', label: 'Total Water Produced (Mass)', value: hourlyRows.length > 0 ? convertLiters(periodTotalWaterL, volumeUnit) : null, unit: UNIT_LABEL[volumeUnit], decimals: volumeUnit === 'acre-ft' ? 6 : 2, requires: ['weight'], subLabel: null as string | null },
+                { key: 'water_total_flow', label: 'Total Water Produced (Flow)', value: hasFlowWater ? convertLiters(periodTotalFlowWaterL, volumeUnit) : null, unit: UNIT_LABEL[volumeUnit], decimals: volumeUnit === 'acre-ft' ? 6 : 2, requires: ['flow_lmin'], subLabel: null as string | null },
                 {
                   key: 'water_per_hour',
-                  label: 'Water Production',
+                  label: 'Water Production (Mass)',
                   value: latestWaterProducedL != null ? convertLiters(latestWaterProducedL, volumeUnit) : null,
                   unit: `${UNIT_LABEL[volumeUnit]}/h`,
                   decimals: volumeUnit === 'acre-ft' ? 6 : 2,
@@ -695,6 +709,15 @@ export default function StationDetails() {
                   subLabel: latestWaterProducedIsStale && latestWaterProducedHour
                     ? `as of ${formatPhoenixMonthDayTime(new Date(latestWaterProducedHour))}`
                     : null,
+                },
+                {
+                  key: 'water_per_hour_flow',
+                  label: 'Water Production (Flow)',
+                  value: latestFlowWaterL != null ? convertLiters(latestFlowWaterL, volumeUnit) : null,
+                  unit: `${UNIT_LABEL[volumeUnit]}/h`,
+                  decimals: volumeUnit === 'acre-ft' ? 6 : 2,
+                  requires: ['flow_lmin'],
+                  subLabel: null as string | null,
                 },
                 { key: 'humidity', label: 'Intake Humidity', value: liveReading.humidity, unit: '%', decimals: 1, requires: ['humidity'], subLabel: null as string | null },
                 { key: 'outtake_humidity', label: 'Outtake Humidity', value: liveReading.outtake_humidity, unit: '%', decimals: 1, requires: ['outtake_humidity'], subLabel: null as string | null },
@@ -936,6 +959,8 @@ export default function StationDetails() {
 
       {stationName && <DataQualityPanel stationName={stationName} />}
 
+      {stationName && <WeatherPanel stationName={stationName} />}
+
       <AlertsPanel
         active={alertsActive}
         recent={alertsRecent}
@@ -1050,16 +1075,36 @@ export default function StationDetails() {
           ) : (
             <FeaturePlot
               data={hourlyWaterProductionData}
-              feature={'Water Production - Water Production Rate (Hourly)' as FeatureType}
+              feature={'Water Production - Water Production Rate, Mass (Hourly)' as FeatureType}
               startDate={format(startDate, 'yyyy-MM-dd')}
               endDate={format(endDate, 'yyyy-MM-dd')}
-              paramNames={['Water Production Rate (Hourly)']}
+              paramNames={['Water Production Rate, Mass (Hourly)']}
               paramUnits={[`${UNIT_LABEL[volumeUnit]}/h`]}
               chartType="bar"
               zoomRange={chartZoom}
               onZoomChange={setChartZoom}
             />
           )}
+        </motion.div>
+      )}
+
+      {!readingsLoading && startDate && endDate && !hourlyEfficiencyLoading && availableFields.includes('flow_lmin') && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.38 }}
+        >
+          <FeaturePlot
+            data={hourlyFlowWaterProductionData}
+            feature={'Water Production - Water Production Rate, Flow (Hourly)' as FeatureType}
+            startDate={format(startDate, 'yyyy-MM-dd')}
+            endDate={format(endDate, 'yyyy-MM-dd')}
+            paramNames={['Water Production Rate, Flow (Hourly)']}
+            paramUnits={[`${UNIT_LABEL[volumeUnit]}/h`]}
+            chartType="bar"
+            zoomRange={chartZoom}
+            onZoomChange={setChartZoom}
+          />
         </motion.div>
       )}
 

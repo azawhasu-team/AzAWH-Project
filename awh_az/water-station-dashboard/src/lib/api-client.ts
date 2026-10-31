@@ -182,6 +182,18 @@ class APIClient {
     );
   }
 
+  /** Hourly ambient weather at the station (default: last 3 days). */
+  async getStationWeather(
+    stationName: string,
+    params?: { start_date?: string; end_date?: string }
+  ): Promise<WeatherResponse> {
+    const q = new URLSearchParams();
+    if (params?.start_date) q.append('start_date', params.start_date);
+    if (params?.end_date) q.append('end_date', params.end_date);
+    const qs = q.toString();
+    return this.fetch<WeatherResponse>(`/stations/${encodeURIComponent(stationName)}/weather${qs ? `?${qs}` : ''}`);
+  }
+
   async getStationCalibrations(stationName: string): Promise<CalibrationEvent[]> {
     return this.fetch<CalibrationEvent[]>(`/stations/${encodeURIComponent(stationName)}/calibrations`);
   }
@@ -364,6 +376,31 @@ class APIClient {
   }
 }
 
+export interface WeatherRow {
+  hour: string; // same "YYYY-MM-DDTHH:00:00Z" key as HourlyDataRow
+  temperature_c: number | null;
+  humidity_pct: number | null;
+  wind_kmh: number | null;
+  gust_kmh: number | null;
+  precip_mm: number | null;
+  weather_code: number | null;
+  visibility_m: number | null;
+  pm10: number | null;
+  dust: number | null;
+  rain: boolean;
+  /** Possible dust event (high PM10/dust + wind) — derived, not an official declaration. */
+  dust_event: boolean;
+  condition: string;
+}
+
+export interface WeatherResponse {
+  station_name: string;
+  latitude: number;
+  longitude: number;
+  total_hours: number;
+  data: WeatherRow[];
+}
+
 export interface QualityIssue {
   sensor: string;
   kind: 'frozen' | 'dead' | 'range';
@@ -422,6 +459,7 @@ export interface HourlyDataRow {
   abs_humidity_outtake_std: number | null;
   water_produced_g: number | null;
   water_produced_L: number | null;
+  water_produced_flow_L: number | null;
   energy_consumed_kWh: number | null;
   energy_per_liter_kWh_L: number | null;
   intake_available_water_g_hourly?: number | null;

@@ -345,6 +345,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                 `Water Produced (g, ${UNIT_LABEL[volumeUnit]})`,
                 'Energy Consumed (kWh)',
                 `Energy/${UNIT_LABEL[volumeUnit]} (kWh/${UNIT_LABEL[volumeUnit]})`,
+                'Weather (temp, humidity, wind, rain, dust event)',
               ].map(label => (
                 <Chip key={label} label={label} size="small"
                   sx={{ fontSize: '0.7rem', backgroundColor: '#fce4ec', color: '#901340', fontWeight: 500 }}
@@ -362,10 +363,14 @@ export default function StationDataDownload({ station }: { station: StationInfo 
               if (!startDate || !endDate) return;
               setHourlyDownloading(true);
               try {
-                const resp = await apiClient.getHourlyAggregation(stationName, {
-                  start_date: startDate.toISOString(),
-                  end_date: endDate.toISOString(),
-                });
+                const range = { start_date: startDate.toISOString(), end_date: endDate.toISOString() };
+                // Weather is context, not the point of this download: if the weather
+                // provider is down the weather columns are blank rather than failing it.
+                const [resp, wx] = await Promise.all([
+                  apiClient.getHourlyAggregation(stationName, range),
+                  apiClient.getStationWeather(stationName, range).catch(() => null),
+                ]);
+                const wxByHour = new Map((wx?.data ?? []).map(w => [w.hour, w]));
                 const exportData = resp.data.map(row => ({
                   'Hour': row.hour,
                   'Arizona Time': formatPhoenixCsvDateTime(row.hour),
@@ -401,6 +406,15 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                   'Energy Consumed (kWh)': row.energy_consumed_kWh,
                   [`Energy per ${UNIT_LABEL[volumeUnit]} (kWh/${UNIT_LABEL[volumeUnit]})`]:
                     row.energy_per_liter_kWh_L != null ? convertSpecificEnergy(row.energy_per_liter_kWh_L, volumeUnit) : row.energy_per_liter_kWh_L,
+                  'Ambient Temperature (°C)': wxByHour.get(row.hour)?.temperature_c ?? null,
+                  'Ambient Humidity (%)': wxByHour.get(row.hour)?.humidity_pct ?? null,
+                  'Wind Speed (km/h)': wxByHour.get(row.hour)?.wind_kmh ?? null,
+                  'Wind Gusts (km/h)': wxByHour.get(row.hour)?.gust_kmh ?? null,
+                  'Precipitation (mm)': wxByHour.get(row.hour)?.precip_mm ?? null,
+                  'PM10 (µg/m³)': wxByHour.get(row.hour)?.pm10 ?? null,
+                  'Rain': wxByHour.get(row.hour) ? (wxByHour.get(row.hour)!.rain ? 'Yes' : 'No') : null,
+                  'Dust Event': wxByHour.get(row.hour) ? (wxByHour.get(row.hour)!.dust_event ? 'Yes' : 'No') : null,
+                  'Weather Note': wxByHour.get(row.hour)?.condition ?? null,
                 }));
                 const csv = Papa.unparse(exportData);
                 const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

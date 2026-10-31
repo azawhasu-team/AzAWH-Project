@@ -21,6 +21,7 @@ vi.mock('@/hooks/queries', () => ({
   useHourly: () => ({ data: [], isFetching: false }),
   useAnomalies: () => ({ data: null }),
   useStationQuality: () => ({ data: undefined, isLoading: false, isError: false }),
+  useStationWeather: () => ({ data: undefined, isLoading: false, isError: false }),
 }));
 
 import StationPage from './page';

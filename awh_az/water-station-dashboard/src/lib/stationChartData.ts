@@ -25,6 +25,8 @@ export function buildParameterCategories(availableFields: string[]): Record<stri
   availableFields.forEach(field => {
     // Exclude raw weight from chart selector — replaced by cumulative water production
     if (field === 'weight') return;
+    // Raw flow_total resets whenever the Pi restarts — replaced by the integrated flow series below
+    if (field === 'flow_total') return;
     const category = fieldCategories[field];
     if (category && fieldDisplayNames[field]) push(category, field);
   });
@@ -35,6 +37,8 @@ export function buildParameterCategories(availableFields: string[]): Record<stri
 
   // Replace raw weight (g) with cumulative water production (L)
   if (has('weight')) push('Water Production', 'accumulated_water_L');
+  // Flow-meter volume: measured flow (L/min) integrated over time
+  if (has('flow_lmin')) push('Water Production', 'accumulated_water_flow_L');
 
   if (has('temperature') && has('humidity') && has('velocity') && has('weight')) {
     push('Efficiency', 'harvesting_efficiency');
@@ -81,6 +85,25 @@ export function buildChartSeries(
     accWaterMap.set(r.timestamp, Math.round(runningWaterG / 1000 * 1000000) / 1000000);
   });
 
+  // Cumulative water production (L) from the flow meter: integrate the measured
+  // flow rate (L/min) over time. Trapezoid between consecutive readings; Δt is
+  // capped at 2 min so an outage or Pi restart isn't credited with continuous flow.
+  const accFlowMap = new Map<string, number>();
+  let runningFlowL = 0;
+  let prevFlow: { t: number; v: number } | null = null;
+  filteredReadings.forEach(r => {
+    const f = typeof r.flow_lmin === 'number' && r.flow_lmin >= 0 ? r.flow_lmin : null;
+    const t = new Date(r.timestamp).getTime();
+    if (f !== null) {
+      if (prevFlow !== null) {
+        const dtS = Math.min((t - prevFlow.t) / 1000, 120);
+        if (dtS > 0) runningFlowL += ((prevFlow.v + f) / 2) * dtS / 60;
+      }
+      prevFlow = { t, v: f };
+    }
+    accFlowMap.set(r.timestamp, Math.round(runningFlowL * 1000000) / 1000000);
+  });
+
   // Incremental energy (kWh) per reading. `reading.energy` is already
   // cumulative kWh at the source (RPi_USB_Package/read_power*.py convert
   // on-device) — this used to divide by 1000 again on top of that, which
@@ -97,8 +120,12 @@ export function buildChartSeries(
   const incEnergyMap = new Map<string, number | null>();
   const cumEnergyMap = new Map<string, number | null>();
   const energyStep = createEnergyJumpTracker();
+  // On a station whose meter normally reports power (the DEM730P only exposes
+  // energy, so its power is always null — not a fault), a reading with no power
+  // means the meter wasn't reporting: leave its energy out, same as the backend.
+  const stationReportsPower = filteredReadings.some(r => typeof r.power === 'number');
   filteredReadings.forEach(r => {
-    const raw = typeof r.energy === 'number' ? r.energy : null;
+    const raw = typeof r.energy === 'number' && (!stationReportsPower || typeof r.power === 'number') ? r.energy : null;
     // A known-corrupt reading (see ENERGY_SANITY_CEILING_KWH) is treated the
     // same as a missing one: skip it, don't fold it into a delta, and don't
     // let it become the new "previous" pointer either — otherwise the reading
@@ -167,6 +194,7 @@ export function buildChartSeries(
       return typeof t === 'number' && typeof h === 'number' ? computeAbsHumidity(t, h) : null;
     }
     if (field === 'accumulated_water_L') return accWaterMap.get(reading.timestamp) ?? 0;
+    if (field === 'accumulated_water_flow_L') return accFlowMap.get(reading.timestamp) ?? 0;
     if (field === 'incremental_water_g') return incWaterMap.get(reading.timestamp) ?? 0;
     if (field === 'incremental_energy_kWh') return incEnergyMap.get(reading.timestamp) ?? null;
     if (field === 'harvesting_efficiency') return effMap.get(reading.timestamp) ?? null;

@@ -74,6 +74,23 @@ describe('buildChartSeries', () => {
     expect(inc.data.map(d => d.value)).toEqual([0, null, 0.5]);
   });
 
+  it('leaves out energy where a power-reporting meter has no power, but not on energy-only meters', () => {
+    const withPower = [
+      reading(0, { energy: 1.0, power: 1000 }),
+      reading(30, { energy: 1.2, power: null }), // meter silent
+      reading(60, { energy: 1.4, power: 1000 }),
+    ];
+    const [, inc] = buildChartSeries(withPower, ...window, ['energy', 'incremental_energy_kWh']);
+    expect(inc.data[1].value).toBeNull();
+
+    // DEM730P: energy only, power always null — energy must still count
+    const energyOnly = [reading(0, { energy: 1.0 }), reading(30, { energy: 1.2 }), reading(60, { energy: 1.4 })];
+    const [, inc2] = buildChartSeries(energyOnly, ...window, ['energy', 'incremental_energy_kWh']);
+    expect(inc2.data[0].value).toBe(0);
+    expect(inc2.data[1].value).toBeCloseTo(0.2, 6);
+    expect(inc2.data[2].value).toBeCloseTo(0.2, 6);
+  });
+
   it('plots a missing reading as a gap, never as zero', () => {
     const rs = [
       reading(0, { energy: 1, temperature: 20, humidity: 50 }),

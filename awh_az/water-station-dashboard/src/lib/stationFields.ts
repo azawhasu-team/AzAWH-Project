@@ -16,9 +16,10 @@ export const fieldDisplayNames: Record<string, string> = {
   abs_humidity_outtake: 'Absolute Humidity (Outtake)',
   flow_lmin: 'Flow Rate',
   flow_hz: 'Flow Frequency',
-  flow_total: 'Total Flow',
+  flow_total: 'Total Flow (since Pi restart)',
   weight: 'Weight',
-  accumulated_water_L: 'Cumulative Water Production',
+  accumulated_water_L: 'Water Production (Mass)',
+  accumulated_water_flow_L: 'Water Production (Flow)',
   incremental_water_g: 'Incremental Water Production',
   power: 'Power',
   voltage: 'Voltage',
@@ -44,6 +45,7 @@ export const fieldUnits: Record<string, string> = {
   flow_total: 'L',
   weight: 'g',
   accumulated_water_L: 'L',
+  accumulated_water_flow_L: 'L',
   incremental_water_g: 'g',
   power: 'W',
   voltage: 'V',
@@ -59,6 +61,7 @@ export const COMPUTED_FIELDS = new Set([
   'abs_humidity_intake',
   'abs_humidity_outtake',
   'accumulated_water_L',
+  'accumulated_water_flow_L',
   'incremental_water_g',
   'incremental_energy_kWh',
   'harvesting_efficiency',
@@ -79,6 +82,7 @@ export const fieldCategories: Record<string, string> = {
   flow_total: 'Water Production',
   weight: 'Water Production',
   accumulated_water_L: 'Water Production',
+  accumulated_water_flow_L: 'Water Production',
   incremental_water_g: 'Water Production',
   harvesting_efficiency: 'Efficiency',
   power: 'Power Consumption',
@@ -148,7 +152,7 @@ export function splitStationDescription(description?: string | null): { text: st
 
 // Fields stored in litres (or litres per minute) that follow the user's
 // chosen volume unit. Everything else keeps its fixed unit.
-const VOLUME_FIELDS = new Set(['accumulated_water_L', 'flow_total', 'flow_lmin']);
+const VOLUME_FIELDS = new Set(['accumulated_water_L', 'accumulated_water_flow_L', 'flow_total', 'flow_lmin']);
 
 export function isVolumeField(field: string): boolean {
   return VOLUME_FIELDS.has(field);

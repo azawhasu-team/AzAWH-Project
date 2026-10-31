@@ -58,12 +58,21 @@ class Settings(BaseSettings):
     alert_smtp_user: str = ""
     alert_smtp_password: str = ""
     alert_email_from: str = ""
+    alert_brevo_api_key: str = ""  # sends over HTTPS; use this on hosts that block SMTP ports (Render free tier)
     alert_email_to: str = ""  # comma-separated
     alert_stale_minutes: float = 120
     alert_reminder_hours: float = 12
     alert_lookback_days: float = 7  # a station that reported this recently is expected to be live
     alert_quality_threshold: int = 60
+    alert_power_missing_hours: int = 2  # alert once power has been missing this many hourly buckets in a row
     alert_expected_live: str = ""  # optional JSON {"station": max_silent_minutes}
+
+    # Ambient weather (weather.py). Stations have no stored coordinates, so all
+    # use these (ASU Tempe campus) unless overridden by location label, e.g.
+    # WEATHER_LOCATION_COORDS='{"Powerplant": [33.41, -111.93]}'.
+    weather_default_lat: float = 33.4255
+    weather_default_lon: float = -111.9400
+    weather_location_coords: str = ""
 
     # Data Configuration
     max_query_limit: int = 10000

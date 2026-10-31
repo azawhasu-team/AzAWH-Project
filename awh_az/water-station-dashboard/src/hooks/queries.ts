@@ -236,6 +236,23 @@ export function useStationQuality(stationName: string | null, days = 7, enabled 
   });
 }
 
+/** Last `days` of hourly ambient weather at the station. */
+export function useStationWeather(stationName: string | null, days = 3) {
+  return useQuery({
+    queryKey: ['weather', stationName, days],
+    queryFn: () => {
+      const end = new Date();
+      return apiClient.getStationWeather(stationName!, {
+        start_date: new Date(end.getTime() - days * 86_400_000).toISOString(),
+        end_date: end.toISOString(),
+      });
+    },
+    enabled: !!stationName,
+    staleTime: 10 * 60_000,
+    retry: 1,
+  });
+}
+
 export function useCalibrations(stationName: string | null, enabled = true) {
   return useQuery({
     queryKey: ['calibrations', stationName],

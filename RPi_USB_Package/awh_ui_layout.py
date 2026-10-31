@@ -1,3 +1,4 @@
+import time
 import tkinter as tk
 from tkinter import ttk
 from datetime import datetime
@@ -73,7 +74,7 @@ class AWHControlPanel(tk.Tk):
         self.config_status.config(text="Configuration Status: LOCKED 🟢")
         self.lock_label.config(text="Config Lock: ON")
         self.csv_status_label.config(text="CSV Logging: Active")
-        self.cloud_status_label.config(text="Cloud Upload: Active")
+        self.cloud_status_label.config(text="Cloud Upload: starting...")
 
         self.sensor_interval.config(state="disabled")
         self.file_interval.config(state="disabled")
@@ -81,6 +82,20 @@ class AWHControlPanel(tk.Tk):
         self.pump_duration.config(state="disabled")
 
         self._update_button_states()
+
+    def auto_start(self, cfg):
+        """Start by itself after an automatic restart, using the settings saved at the last Start."""
+        if not cfg or self._is_running:
+            return
+        try:
+            self.sensor_interval.set(f"{int(cfg['interval'])} s")
+            self.file_interval.set(f"{max(1, int(cfg['file_minutes']) // 60)} hr")
+            self.weight_threshold.set(f"{cfg['threshold_g']:g} g")
+            self.pump_duration.set(f"{cfg['pump_duration_min']:g} min")
+        except (KeyError, TypeError, ValueError):
+            return  # incomplete config: leave the operator's screen as it is rather than guess
+        self._on_validate()
+        self._on_start()
 
     def _on_stop(self):
         """Stop acquisition."""
@@ -402,10 +417,28 @@ class AWHControlPanel(tk.Tk):
             ("power", "Power"),
             ("energy", "Energy"),
             ("flow_lmin", "Flow Rate"),
+            ("flow_total", "Water Produced (Flow)"),
         ]:
             lbl = ttk.Label(bottom, text=f"{caption}: —")
             lbl.pack(anchor="w")
             self.param_labels[key] = lbl
+
+    def _cloud_status_text(self):
+        """Real upload state from the uploader, not just "rows are being produced"."""
+        uploader = getattr(self.controller, "uploader", None)
+        if uploader is None:
+            return "Cloud Upload: N/A"
+        try:
+            st = uploader.stats()
+        except Exception:
+            return "Cloud Upload: unknown"
+        queued, last_ok = st.get("queued", 0), st.get("last_success_ts")
+        ago = f"last sent {int(time.time() - last_ok)}s ago" if last_ok else "nothing sent yet"
+        if st.get("failing"):
+            return f"Cloud Upload: OFFLINE - {queued} waiting ({ago})"
+        if queued > 5:
+            return f"Cloud Upload: catching up - {queued} waiting ({ago})"
+        return f"Cloud Upload: OK ({ago})"
 
     @staticmethod
     def _fmt(raw, unit=""):
@@ -413,6 +446,14 @@ class AWHControlPanel(tk.Tk):
         if raw is None or raw in ("", "None", "nan"):
             return "—"
         return f"{raw}{unit}"
+
+    @staticmethod
+    def _round(raw, digits):
+        """Round a raw string field to `digits` places; pass through if not numeric."""
+        try:
+            return f"{float(raw):.{digits}f}"
+        except (TypeError, ValueError):
+            return raw
 
     def update_status(self, data_str):
         """Receive backend CSV-format row and refresh status labels.
@@ -431,7 +472,7 @@ class AWHControlPanel(tk.Tk):
 
             runtime = fields[12]
             self.runtime_label.config(text=f"Runtime: {runtime}")
-            self.cloud_status_label.config(text="Cloud Upload: Active")
+            self.cloud_status_label.config(text=self._cloud_status_text())
 
             if len(fields) < 24:
                 return
@@ -439,6 +480,7 @@ class AWHControlPanel(tk.Tk):
             weight, unit = fields[5], fields[6]
             V, A, W, Wh = fields[8], fields[9], fields[10], fields[11]
             flow_lmin = fields[13]
+            flow_total = fields[15]
             t_in, v_in, h_in, v_unit_in = fields[16], fields[17], fields[18], fields[19]
             t_out, v_out, h_out, v_unit_out = fields[20], fields[21], fields[22], fields[23]
 
@@ -461,6 +503,9 @@ class AWHControlPanel(tk.Tk):
             self.param_labels["power"].config(text=f"Power: {self._fmt(W, ' W')}")
             self.param_labels["energy"].config(text=f"Energy: {self._fmt(Wh, ' kWh')}")
             self.param_labels["flow_lmin"].config(text=f"Flow Rate: {self._fmt(flow_lmin, ' L/min')}")
+            self.param_labels["flow_total"].config(
+                text=f"Water Produced (Flow): {self._fmt(self._round(flow_total, 3), ' L')}"
+            )
 
             self._update_sensor_health(
                 balance_ok=weight not in (None, "", "None", "nan"),

@@ -178,3 +178,39 @@ Flow: 2.3 L/min
 ...
 
 ===============================================
+
+
+===============================================
+SYSTEMD SERVICE: restart the station program after a crash
+===============================================
+Does NOT start at boot. You start it yourself; while it is running, systemd
+starts it again if it crashes. Closing the window normally is not restarted.
+
+IMPORTANT: close any copy of the station program you started by hand first
+(pkill -f AquaPars1). Two copies fight over the serial ports and GPIO.
+
+# 1. Install (once per Pi). Run as the normal user (not sudo):
+mkdir -p ~/.config/systemd/user
+cp ~/RPi_USB_Package/awh-station.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+
+# 2. Start it (whenever you want the station running)
+systemctl --user start awh-station.service
+
+# 3. Check it
+systemctl --user status awh-station.service
+journalctl --user -u awh-station.service -n 50 --no-pager     # recent log
+journalctl --user -u awh-station.service -f                   # follow live
+
+# 4. Stop it (e.g. for maintenance)
+systemctl --user stop awh-station.service
+
+# 5. After copying new code to the Pi
+systemctl --user restart awh-station.service
+
+# Notes
+# - Press Start in the panel once so the settings are saved
+#   (station_state/last_config.json). After a crash it then resumes recording by itself.
+#   If nothing was saved yet it just shows the panel and waits for you.
+# - To test: pkill -9 -f AquaPars1 (a kill, counted as a crash: it should come back in ~10 s);
+#   unplug the power meter's USB for 3 minutes.

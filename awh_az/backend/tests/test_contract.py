@@ -154,3 +154,73 @@ def test_hourly_value_kinds_match_typescript(client, use_firestore):
             elif isinstance(v, (int, float)) and not isinstance(v, bool) and tk != "number":
                 bad.append(f"{k}: number but TypeScript {tk}")
     assert not bad, bad[:10]
+
+
+def test_hourly_flow_volume_is_integrated_flow_rate(client, use_firestore):
+    # Constant 1.2 L/min, one reading a minute -> 72 L per full hour,
+    # independent of the weight-based water_produced_L.
+    readings = hourly_readings()
+    for r in readings:
+        r["flow_lmin"] = 1.2
+    use_firestore({"x": {"readings": readings, "meta": {}}})
+    rows = client.get("/stations/x/hourly").json()["data"]
+    assert rows[1]["water_produced_flow_L"] == pytest.approx(72.0, rel=1e-3)
+
+
+def test_hourly_flow_volume_is_null_without_a_flow_meter(client, use_firestore):
+    use_firestore({"x": {"readings": hourly_readings(), "meta": {}}})
+    rows = client.get("/stations/x/hourly").json()["data"]
+    assert all(r["water_produced_flow_L"] is None for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# Weather
+# ---------------------------------------------------------------------------
+def test_weather_flags_rain_and_dust():
+    import weather
+    assert weather.classify({"precip_mm": 0.4, "weather_code": 0, "pm10": 20, "gust_kmh": 10})["rain"]
+    assert weather.classify({"precip_mm": 0, "weather_code": 81})["rain"]
+    dusty = weather.classify({"precip_mm": 0, "weather_code": 0, "pm10": 600, "gust_kmh": 60})
+    assert dusty["dust_event"] and "Dust event" in dusty["condition"]
+    # High PM10 with no wind is not flagged as a blowing-dust event
+    assert not weather.classify({"pm10": 600, "gust_kmh": 5})["dust_event"]
+    assert weather.classify({})["condition"] == "No rain or dust"
+
+
+def test_weather_endpoint_returns_rows_and_502_when_provider_down(client, monkeypatch):
+    import weather
+    row = {"hour": "2026-06-01T08:00:00Z", "temperature_c": 30.0, "rain": False, "dust_event": False}
+    monkeypatch.setattr(weather, "get_hourly_weather", lambda *a, **k: [row])
+    body = client.get("/stations/x/weather").json()
+    assert body["total_hours"] == 1 and body["data"][0]["temperature_c"] == 30.0
+
+    def boom(*a, **k):
+        raise OSError("down")
+    monkeypatch.setattr(weather, "get_hourly_weather", boom)
+    assert client.get("/stations/x/weather").status_code == 502
+
+
+def _energy_hours(null_power_in_hour_two):
+    rs = hourly_readings()
+    if null_power_in_hour_two:
+        for r in rs[60:90]:          # 30 minutes of hour 2 with the meter silent
+            r["power"] = None
+    return rs
+
+
+def test_hourly_energy_leaves_out_stretches_where_power_is_missing(client, use_firestore):
+    use_firestore({"x": {"readings": _energy_hours(False), "meta": {}}})
+    full = client.get("/stations/x/hourly").json()["data"]
+    main.cache.delete_pattern("hourly:*")   # same URL would otherwise return the cached first result
+    use_firestore({"x": {"readings": _energy_hours(True), "meta": {}}})
+    cut = client.get("/stations/x/hourly").json()["data"]
+    assert cut[1]["energy_consumed_kWh"] < full[1]["energy_consumed_kWh"]
+
+
+def test_energy_only_station_keeps_its_energy_when_power_is_always_null(client, use_firestore):
+    rs = hourly_readings()
+    for r in rs:
+        r["power"] = None            # DEM730P-style: never reports power
+    use_firestore({"x": {"readings": rs, "meta": {}}})
+    rows = client.get("/stations/x/hourly").json()["data"]
+    assert rows[1]["energy_consumed_kWh"] is not None and rows[1]["energy_consumed_kWh"] > 0

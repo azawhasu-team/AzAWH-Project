@@ -1,6 +1,6 @@
 import time
 import threading
-from gpiozero import Button
+from gpiozero import DigitalInputDevice
 
 
 def _free_gpio_pin(pin):
@@ -21,31 +21,39 @@ def _free_gpio_pin(pin):
             pass
 
 
+# YF-S201 style sensor: pulse frequency (Hz) = 7.5 * flow rate (L/min)
+CALIBRATION_FACTOR = 7.5
+
+
 class FlowMeterReader:
     """
-    Reads a pulse-output flow meter using gpiozero Button.
-    SMWF-0420A spec (gpiozero version):
-        - K ≈ 2800 pulses/L
-        - Flow (L/min) = pulses_per_sec / 46.7
-        - Volume (L)   = total_pulses / 2800
+    Reads a pulse-output flow meter (YF-S201 style) on GPIO 22.
+        - Flow (L/min) = pulses_per_sec / 7.5
+        - Volume (L)   = integral of flow over time (flow_lmin * dt / 60),
+                         accumulated every sample. The callback's third value
+                         is this integrated volume since start().
+    Rising edges are counted (pull-down input), matching the bench script
+    that was verified against the real sensor.
     """
-    def __init__(self, pin=27, interval=1, callback=None):
+    def __init__(self, pin=22, interval=1, callback=None):
         self.pin = pin
         self.interval = interval
         self.callback = callback
         self._running = False
         self._thread = None
         self._pulse_count = 0
+        self._lock = threading.Lock()
+        self._total_liters = 0.0
 
         # Free the pin first in case a previous run left it claimed
         _free_gpio_pin(pin)
 
-        # Use pull_up=True for open-collector output
-        self.sensor = Button(self.pin, pull_up=True)
-        self.sensor.when_pressed = self._pulse_callback
+        self.sensor = DigitalInputDevice(self.pin, pull_up=False)
+        self.sensor.when_activated = self._pulse_callback
 
     def _pulse_callback(self):
-        self._pulse_count += 1
+        with self._lock:
+            self._pulse_count += 1
 
     def start(self):
         if self._running:
@@ -58,11 +66,8 @@ class FlowMeterReader:
         """Stop the background polling thread and release the GPIO pin.
 
         Waits for the background thread to fully exit, then closes the
-        gpiozero Button so its edge-detection callback is unregistered before
-        a restart claims the same pin again — otherwise a restart relies
-        entirely on _free_gpio_pin()'s force-free to avoid a "pin already in
-        use" error, and the old object's callback can keep firing into a
-        _pulse_count nobody is reading anymore.
+        gpiozero device so its edge-detection callback is unregistered before
+        a restart claims the same pin again.
         """
         self._running = False
         if self._thread and self._thread.is_alive():
@@ -73,16 +78,24 @@ class FlowMeterReader:
             pass
 
     def _run(self):
-        last_count = 0
+        last_time = time.monotonic()
         while self._running:
             time.sleep(self.interval)
-            current_count = self._pulse_count
-            pulses = current_count - last_count
-            last_count = current_count
+            now = time.monotonic()
+            elapsed = now - last_time
+            last_time = now
 
-            hz = pulses / self.interval
-            flow_lmin = hz / 46.7
-            total_liters = current_count / 2800.0
+            # Take and reset the pulses seen since the last sample
+            with self._lock:
+                pulses = self._pulse_count
+                self._pulse_count = 0
+
+            # Use measured elapsed time (sleep() drifts)
+            hz = pulses / elapsed if elapsed > 0 else 0.0
+            flow_lmin = hz / CALIBRATION_FACTOR
+
+            # Integrate flow (L/min) over the interval (s) -> litres
+            self._total_liters += flow_lmin * elapsed / 60.0
 
             if self.callback:
-                self.callback(flow_lmin, hz, total_liters)
+                self.callback(flow_lmin, hz, self._total_liters)

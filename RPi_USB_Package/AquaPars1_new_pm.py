@@ -8,6 +8,7 @@ Variant of AquaPars1.py that uses the DEM730P power meter driver
 """
 
 import os
+import sys
 import threading
 import time
 import csv
@@ -21,13 +22,23 @@ from read_power_new import PowerMeterReader
 from read_flow import FlowMeterReader
 from awh_ui_layout import AWHControlPanel
 from cloud_uploader import CloudUploader, setup_file_logging
+from auto_recovery import (
+    AUTOSTART_FLAG, PowerRecovery, load_config, save_config, allow_program_restart, restart_program, RESTART_READER, RESTART_PROGRAM,
+)
 
 STATION_NAME = "station_testbed_1@Powerplant"
 CLOUD_URL = "https://us-central1-awh-project-460421.cloudfunctions.net/receive_data"
 
-CLOUD_UPLOAD_EVERY_SEC = 60  # send to cloud at most once every 60s
+# Cloud uploads follow the sensor interval chosen in the control UI (self.interval).
+# The flow meter always samples once a second (its volume is integrated from these
+# samples, so a coarser rate would lose accuracy). Every other sensor follows the
+# sensor interval chosen in the control UI (self.interval).
+FLOW_SAMPLE_SEC = 1
+# Cap on buffered 1 s samples (1 hour) so a long sensor interval can't grow memory or the upload.
+MAX_FLOW_SAMPLES_PER_UPLOAD = 3600
 
 READER_STALE_SEC = 45        # if no new data for this many seconds, restart that reader
+POWER_NULL_RESTART_SEC = 120  # power/voltage missing this long (on a meter that normally reports them) -> auto-recover
 WATCHDOG_POLL_SEC = 5        # how often the watchdog checks staleness
 
 
@@ -54,7 +65,6 @@ class StationController:
         self.start_time = None
         self.last_file_time = datetime.now()
 
-        self.cloud_upload_interval_secs = CLOUD_UPLOAD_EVERY_SEC
         # Non-blocking, durable uploads: readings are queued on disk and retried,
         # so a network outage can't stall CSV logging or lose data.
         self.uploader = CloudUploader(CLOUD_URL, os.path.join("station_state", "upload_queue.sqlite3"))
@@ -64,6 +74,10 @@ class StationController:
         self.balance_line = None
         self.power_tuple = None
         self.flow_tuple = None
+        # Every 1 s flow sample since the last cloud upload: (flow_lmin, hz)
+        self._flow_window = []
+        self.power_recovery = PowerRecovery(null_after_s=POWER_NULL_RESTART_SEC)
+        self._flow_lock = threading.Lock()
         self.intake_air_data = (None, None, None, "m/s")
         self.outtake_air_data = (None, None, None, "m/s")
 
@@ -109,7 +123,7 @@ class StationController:
 
     def _start_flow_reader(self):
         try:
-            self.flow_reader = FlowMeterReader(pin=27, interval=self.interval, callback=self._on_flow_data)
+            self.flow_reader = FlowMeterReader(pin=22, interval=FLOW_SAMPLE_SEC, callback=self._on_flow_data)
             self.flow_reader.start()
             self._last_flow_ts = time.time()
             print("[Watchdog] Flow reader started.")
@@ -163,10 +177,20 @@ class StationController:
     def _on_power_data(self, V, A, W, Wh):
         self._last_power_ts = time.time()
         self.power_tuple = (V, A, W, Wh)
+        self.power_recovery.on_power(V, A, W, Wh)
 
     def _on_flow_data(self, flow_lmin, hz, total_liters):
         self._last_flow_ts = time.time()
         self.flow_tuple = (flow_lmin, hz, total_liters)
+        with self._flow_lock:
+            self._flow_window.append((flow_lmin, hz))
+            del self._flow_window[:-MAX_FLOW_SAMPLES_PER_UPLOAD]  # bound memory if the interval is long
+
+    def _drain_flow_window(self):
+        """Per-second flow samples since the last upload, oldest first; clears the buffer."""
+        with self._flow_lock:
+            window, self._flow_window = self._flow_window, []
+        return window
 
     # ---------- CSV ----------
     def create_new_csv_file(self):
@@ -193,6 +217,18 @@ class StationController:
             return
         self.running = True
         self.start_time = time.time()
+
+        # Remember these settings so an automatic program restart can start itself.
+        try:
+            save_config({
+                "interval": self.interval,
+                "file_minutes": self.file_saving_interval_minutes,
+                "threshold_g": self.pump.threshold_g,
+                "pump_duration_min": self.pump.duration_min,
+            })
+        except Exception as e:
+            print(f"[Recovery] Could not save run settings: {e}")
+        self.power_recovery = PowerRecovery(null_after_s=POWER_NULL_RESTART_SEC)
 
         self.uploader.start()
         self._start_balance_reader()
@@ -309,13 +345,21 @@ class StationController:
         ])
         self.csv_file.flush()
 
-        if (now_ts - self._last_cloud_upload_ts) >= self.cloud_upload_interval_secs:
+        if (now_ts - self._last_cloud_upload_ts) >= self.interval:
+            # Flow is measured every second; send the mean over this interval as
+            # flow_lmin/flow_hz (more accurate than a single instant) plus every
+            # 1 s sample, oldest first, ending at this row's timestamp.
+            flow_window = self._drain_flow_window()
+            if flow_window:
+                flow_lmin = round(sum(f for f, _ in flow_window) / len(flow_window), 4)
+                hz = round(sum(h for _, h in flow_window) / len(flow_window), 3)
             self.uploader.submit(self.station_name, {
                 "temperature": t_in, "humidity": h_in, "velocity": v_in, "unit": v_unit_in,
                 "outtake_temperature": t_out, "outtake_humidity": h_out, "outtake_velocity": v_out, "outtake_unit": v_unit_out,
                 "voltage": V, "current": A, "power": W, "energy": Wh,
                 "weight": weight, "pump_status": pump_status_bit,
-                "flow_lmin": flow_lmin, "flow_hz": hz, "flow_total": total_liters
+                "flow_lmin": flow_lmin, "flow_hz": hz, "flow_total": total_liters,
+                "flow_samples_lmin": [round(f, 3) for f, _ in flow_window],
             })
             self._last_cloud_upload_ts = now_ts
 
@@ -362,9 +406,25 @@ class StationController:
                     self._restart_reader("flow")
                     time.sleep(2)
 
+                action = self.power_recovery.poll()
+                if action == RESTART_READER:
+                    print("[Recovery] Power/voltage missing. Restarting the power reader...")
+                    self._restart_reader("power")
+                elif action == RESTART_PROGRAM:
+                    self._restart_whole_program()
+
             except Exception as e:
                 print(f"[Watchdog] Error: {e}")
             time.sleep(WATCHDOG_POLL_SEC)
+
+    def _restart_whole_program(self):
+        """Last resort when restarting the power reader did not bring power back."""
+        if not allow_program_restart():
+            print("[Recovery] Already restarted the program 3 times this hour; not restarting again.")
+            return
+        print("[Recovery] Power still missing after reader restarts. Restarting the whole program...")
+        self.stop_reading()
+        restart_program()  # replaces this process; the new one auto-starts with the saved settings
 
     # ---------- Anemometers ----------
     def read_intake_air_data(self):
@@ -404,6 +464,9 @@ def main():
 
     controller.callback = app.update_status
     controller.pump.set_status_callback(app.update_pump_status)
+
+    if AUTOSTART_FLAG in sys.argv:
+        app.after(3000, app.auto_start, load_config())
 
     app.mainloop()
     try:

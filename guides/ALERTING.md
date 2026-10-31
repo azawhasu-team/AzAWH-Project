@@ -15,7 +15,11 @@ Three features that make the dashboard useful when nobody is looking at it.
 | Warning becomes critical | Notify again (breaks through an acknowledge, not a snooze) |
 | Clears | One "RESOLVED" message |
 
-Rules today: **station not sending data** (silent longer than `ALERT_STALE_MINUTES`, critical once silent for 3x that or 6 h) and **poor data quality** (yesterday's score below `ALERT_QUALITY_THRESHOLD`).
+Rules today:
+- **Station not sending data**: silent longer than `ALERT_STALE_MINUTES`, critical once silent for 3x that or 6 h.
+- **Poor data quality**: yesterday's score below `ALERT_QUALITY_THRESHOLD`.
+- **Station turned off**: still reporting but no energy used for about 2 hours (same idea as the dashboard's "Station is off"). When it runs again you get a RESOLVED email, which is the "turned on" message.
+- **Power meter not reporting**: a meter that normally reports power/voltage has sent none for `ALERT_POWER_MISSING_HOURS` (2) hours. Meters that never report power (DEM730P, energy only) are never flagged, and a power-meter fault is not also reported as "turned off".
 
 A station is *expected live* if it reported within `ALERT_LOOKBACK_DAYS` (7), so retired stations never alert. Override or add stations with `ALERT_EXPECTED_LIVE='{"station_name": 90}'` (max silent minutes).
 
@@ -29,7 +33,12 @@ ALERT_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...     # optional
 ALERT_SMTP_HOST=smtp.gmail.com  ALERT_SMTP_PORT=587              # optional
 ALERT_SMTP_USER=...  ALERT_SMTP_PASSWORD=...  ALERT_EMAIL_FROM=...  ALERT_EMAIL_TO=a@x.edu,b@x.edu
 ALERT_LINK_SECRET=<long random>      # signs the links; falls back to ADMIN_API_KEY
+ALERT_BREVO_API_KEY=...              # optional: send email over HTTPS (Brevo API) instead of SMTP
 ```
+
+**Render's free tier blocks the SMTP ports (25/465/587)**, so SMTP sends there time out ("failed: timed out"). Set `ALERT_BREVO_API_KEY` (Brevo -> SMTP & API -> API keys) and the backend sends over HTTPS instead; it is used in preference to SMTP when set, with `ALERT_EMAIL_FROM` as the sender (a verified Brevo sender) and `ALERT_EMAIL_TO` as recipients.
+
+A notification that no channel delivered is **not** recorded as announced, so the next run retries it.
 
 With no channel configured, alerts are only written to the log. Each channel fails independently: a down Slack never blocks the email.
 

@@ -176,3 +176,113 @@ class TestTokens:
         assert "token=" not in plain
         _, plain, _ = alerting.build_message("resolved", alert().__dict__, "https://api.example", "k", NOW)
         assert "token=" not in plain and plain.startswith("RESOLVED")
+
+
+# ---------------------------------------------------------------------------
+# power_missing
+# ---------------------------------------------------------------------------
+def _hrs(*powers):
+    return [{"power_mean": p, "reading_count": 60} for p in powers]
+
+
+def test_power_status_counts_trailing_missing_hours():
+    a = alerting.power_status(_hrs(1100, 1200, None, None, None))
+    assert (a["reports_power"], a["missing_hours"]) == (True, 3)
+    b = alerting.power_status(_hrs(None, 1100))
+    assert (b["reports_power"], b["missing_hours"]) == (True, 0)
+
+
+def test_energy_only_meter_is_never_a_power_fault():
+    # DEM730P: power is always null by design
+    st = alerting.power_status(_hrs(None, None, None, None))
+    assert (st["reports_power"], st["missing_hours"]) == (False, 4)
+    now = datetime(2026, 10, 31, 12, tzinfo=timezone.utc)
+    stations = [{"station_name": "a", "metadata": {"last_reading": now.isoformat()}}]
+    assert alerting.evaluate(stations, {}, now, power={"a": st}) == []
+
+
+def test_power_missing_alert_fires_after_threshold_for_meters_that_report_power():
+    now = datetime(2026, 10, 31, 12, tzinfo=timezone.utc)
+    stations = [{"station_name": "a", "metadata": {"last_reading": now.isoformat()}}]
+    one = alerting.evaluate(stations, {}, now, power={"a": {"reports_power": True, "missing_hours": 1}})
+    assert one == []
+    out = alerting.evaluate(stations, {}, now, power={"a": {"reports_power": True, "missing_hours": 3}})
+    assert [a.rule for a in out] == ["power_missing"] and out[0].severity == "warning"
+    out = alerting.evaluate(stations, {}, now, power={"a": {"reports_power": True, "missing_hours": 8}})
+    assert out[0].severity == "critical"
+
+
+# ---------------------------------------------------------------------------
+# station_off
+# ---------------------------------------------------------------------------
+def _en(*kwh):
+    return [{"energy_consumed_kWh": v, "power_mean": None, "reading_count": 60} for v in kwh]
+
+
+def test_station_off_when_no_energy_used_for_two_hours():
+    now = datetime(2026, 10, 31, 12, tzinfo=timezone.utc)
+    stations = [{"station_name": "a", "metadata": {"last_reading": now.isoformat()}}]
+    st = alerting.power_status(_en(1.2, 1.1, None, None))
+    assert st["off_hours"] == 2 and st["reports_energy"]
+    out = alerting.evaluate(stations, {}, now, power={"a": st})
+    assert [a.rule for a in out] == ["station_off"] and "turned off" in out[0].title
+    # running again -> alert clears (plan() then sends the RESOLVED email)
+    on = alerting.power_status(_en(1.2, None, None, 1.0))
+    assert alerting.evaluate(stations, {}, now, power={"a": on}) == []
+
+
+def test_one_quiet_bucket_is_not_off_and_a_station_with_no_energy_history_never_is():
+    now = datetime(2026, 10, 31, 12, tzinfo=timezone.utc)
+    stations = [{"station_name": "a", "metadata": {"last_reading": now.isoformat()}}]
+    assert alerting.evaluate(stations, {}, now, power={"a": alerting.power_status(_en(1.2, 1.1, None))}) == []
+    never = alerting.power_status(_en(None, None, None))
+    assert never["reports_energy"] is False
+    assert alerting.evaluate(stations, {}, now, power={"a": never}) == []
+
+
+def test_power_meter_fault_is_not_also_reported_as_station_off():
+    now = datetime(2026, 10, 31, 12, tzinfo=timezone.utc)
+    stations = [{"station_name": "a", "metadata": {"last_reading": now.isoformat()}}]
+    rows = [{"energy_consumed_kWh": 1.0, "power_mean": 1100, "reading_count": 60}] * 2 + \
+           [{"energy_consumed_kWh": None, "power_mean": None, "reading_count": 60}] * 3
+    out = alerting.evaluate(stations, {}, now, power={"a": alerting.power_status(rows)})
+    assert [a.rule for a in out] == ["power_missing"]
+
+
+# ---------------------------------------------------------------------------
+# delivery failures must be retried, and the HTTPS (Brevo API) sender
+# ---------------------------------------------------------------------------
+def test_failed_notification_is_not_recorded_as_announced():
+    now = datetime(2026, 10, 31, 12, tzinfo=timezone.utc)
+    a = alerting.Alert("s|stale", "s", "S", "stale", "warning", "S: not sending", "x")
+    notes, new_state = alerting.plan([a], {}, now)
+    assert [k for k, _ in notes] == ["new"] and "s|stale" in new_state
+    restored = alerting.undo_failed(new_state, {}, notes)
+    assert "s|stale" not in restored          # next run sees it as new again and retries
+    # a reminder that failed keeps the OLD last_notified, so it is retried too
+    later = now + timedelta(hours=13)
+    notes2, st2 = alerting.plan([a], new_state, later)
+    assert [k for k, _ in notes2] == ["reminder"]
+    back = alerting.undo_failed(st2, new_state, notes2)
+    assert back["s|stale"]["last_notified"] == new_state["s|stale"]["last_notified"]
+
+
+def test_brevo_api_sender_posts_json_over_https(monkeypatch):
+    seen = {}
+
+    class Resp:
+        status = 201
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(req, timeout=None):
+        seen["url"], seen["headers"], seen["body"] = req.full_url, dict(req.header_items()), req.data
+        return Resp()
+
+    monkeypatch.setattr(alerting.urllib.request, "urlopen", fake_urlopen)
+    alerting.send_email_brevo_api("KEY", "from@x.org", ["a@x.edu", "b@x.edu"], "Subj", "Body")
+    assert seen["url"] == "https://api.brevo.com/v3/smtp/email"
+    assert seen["headers"]["Api-key"] == "KEY"
+    import json as _json
+    body = _json.loads(seen["body"])
+    assert [t["email"] for t in body["to"]] == ["a@x.edu", "b@x.edu"] and body["subject"] == "Subj"

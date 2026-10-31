@@ -1,0 +1,29 @@
+# AWH station program as a systemd USER service.
+#
+# Runs the station program and starts it again if it crashes, resuming recording
+# with the settings saved at the last Start (--autostart). It does NOT start at
+# boot: you start it yourself (systemctl --user start awh-station.service).
+# Closing the window normally (a clean exit) is NOT restarted.
+#
+# Which script? This Pi's meter is the DEM730P, so it runs AquaPars1_new_pm.py.
+# For a station with the older Prolific meter, change it to AquaPars1.py below.
+#
+# Install: see "SYSTEMD SERVICE" in RASPBERRY_PI_COMMANDS.txt
+[Unit]
+Description=AWH station (control panel + recording)
+# Give up after 10 failures in 10 minutes so a real fault does not restart forever.
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=%h/RPi_USB_Package
+ExecStart=/usr/bin/python3 %h/RPi_USB_Package/AquaPars1_new_pm.py --autostart
+Restart=on-failure
+RestartSec=10
+# Display for the control panel (X11 / XWayland on the Pi desktop)
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=%h/.Xauthority
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=PYTHONUNBUFFERED=1

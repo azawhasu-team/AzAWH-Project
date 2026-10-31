@@ -76,6 +76,39 @@ def expected_live(stations: list[dict], now: datetime, lookback_days: float, exp
     return out
 
 
+def power_status(hourly_rows: list[dict]) -> dict:
+    """From a station's hourly rows (oldest first): does its meter normally report
+    power, and for how many of the most recent hourly buckets has it not?
+
+    A meter that never reports power (the DEM730P only exposes energy) is
+    reports_power=False and is never a fault."""
+    def has_power(r):
+        v = r.get("power_mean")
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+    reports = any(has_power(r) for r in hourly_rows)
+    missing = 0
+    for r in reversed(hourly_rows):
+        if has_power(r):
+            break
+        missing += 1
+
+    # Station on/off from energy: an hour with no energy consumed (under the
+    # backend's noise floor, same rule as the dashboard's "Station is off") is an
+    # off hour. Only meaningful for a station that has consumed energy in the window.
+    def used_energy(r):
+        v = r.get("energy_consumed_kWh")
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
+
+    reports_energy = any(used_energy(r) for r in hourly_rows)
+    off = 0
+    for r in reversed(hourly_rows):
+        if used_energy(r):
+            break
+        off += 1
+    return {"reports_power": reports, "missing_hours": missing, "reports_energy": reports_energy, "off_hours": off}
+
+
 def evaluate(
     stations: list[dict],
     quality_latest: dict[str, dict],
@@ -85,6 +118,9 @@ def evaluate(
     lookback_days: float = 7,
     explicit: Optional[dict[str, float]] = None,
     quality_threshold: int = 60,
+    power: Optional[dict[str, dict]] = None,
+    power_missing_hours: int = 2,
+    off_hours: int = 2,
 ) -> list[Alert]:
     """Active alerts right now. `quality_latest` maps station -> its latest
     COMPLETE day from quality.daily_quality (yesterday), if any."""
@@ -111,6 +147,32 @@ def evaluate(
                         f"Last reading {hours:.1f} h ago (alert after {limit / 60:.1f} h).",
                     )
                 )
+        ps = (power or {}).get(name)
+        if ps and ps["reports_power"] and ps["missing_hours"] >= power_missing_hours:
+            hrs = ps["missing_hours"]
+            alerts.append(
+                Alert(
+                    f"{name}|power_missing", name, display, "power_missing",
+                    "critical" if hrs >= 6 else "warning",
+                    f"{display}: power meter not reporting",
+                    f"Power/voltage missing for about {hrs} h. Its energy is left out of consumption "
+                    "until it returns. The station restarts the meter reader by itself; if this "
+                    "persists, check the meter wiring.",
+                )
+            )
+        # Off for the last `off_hours` hourly buckets (the latest, possibly partial,
+        # plus the last full hour). Skipped when the power meter itself is the
+        # problem: its energy is excluded then, which would look like "off".
+        power_fault = bool(ps and ps["reports_power"] and ps["missing_hours"] >= power_missing_hours)
+        if ps and ps.get("reports_energy") and ps.get("off_hours", 0) >= off_hours and not power_fault and last is not None:
+            alerts.append(
+                Alert(
+                    f"{name}|station_off", name, display, "station_off", "warning",
+                    f"{display}: station turned off",
+                    f"The station is still reporting but has used no energy for about {ps['off_hours']} h. "
+                    "You will get a RESOLVED email when it is running again.",
+                )
+            )
         q = quality_latest.get(name)
         if q and q.get("score") is not None and q["score"] < quality_threshold:
             names = ", ".join(sorted({i["sensor"] for i in q.get("issues", []) if i["kind"] in ("frozen", "dead")})) or "low coverage"
@@ -260,6 +322,37 @@ def send_email(host: str, port: int, user: str, password: str, sender: str, reci
         smtp.send_message(msg)
 
 
+def send_email_brevo_api(api_key: str, sender: str, recipients: list[str], subject: str, body: str, timeout: float = 15) -> None:
+    """Send over Brevo's HTTPS API (port 443). Hosts such as Render's free tier block
+    the SMTP ports, so this is the way to send mail from there."""
+    payload = json.dumps({
+        "sender": {"email": sender, "name": "AWH Station Alerts"},
+        "to": [{"email": r} for r in recipients],
+        "subject": subject,
+        "textContent": body,
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email", data=payload, method="POST",
+        headers={"api-key": api_key, "content-type": "application/json", "accept": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - fixed https URL
+        if resp.status >= 300:
+            raise RuntimeError(f"Brevo API answered {resp.status}")
+
+
+def undo_failed(new_state: dict, previous: dict, failed_notes: list) -> dict:
+    """Put back the previous state for alerts whose notification went nowhere, so the
+    next run tries again instead of treating them as already announced."""
+    out = dict(new_state)
+    for _kind, alert in failed_notes:
+        aid = alert["id"]
+        if aid in previous:
+            out[aid] = previous[aid]
+        else:
+            out.pop(aid, None)
+    return out
+
+
 def deliver(settings, kind: str, alert: dict, now: datetime) -> dict:
     """Send one notification on every configured channel. Never raises: a down
     Slack must not stop the email, nor the evaluation run."""
@@ -273,7 +366,17 @@ def deliver(settings, kind: str, alert: dict, now: datetime) -> dict:
             logger.warning("Slack alert failed: %s", e)
             results["channels"]["slack"] = f"failed: {e}"
     recipients = [r.strip() for r in settings.alert_email_to.split(",") if r.strip()]
-    if settings.alert_smtp_host and recipients:
+    if settings.alert_brevo_api_key and recipients:
+        try:
+            send_email_brevo_api(
+                settings.alert_brevo_api_key, settings.alert_email_from or settings.alert_smtp_user,
+                recipients, subject, plain,
+            )
+            results["channels"]["email"] = "sent"
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Email alert (Brevo API) failed: %s", e)
+            results["channels"]["email"] = f"failed: {e}"
+    elif settings.alert_smtp_host and recipients:
         try:
             send_email(
                 settings.alert_smtp_host, settings.alert_smtp_port, settings.alert_smtp_user,

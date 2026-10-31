@@ -48,6 +48,7 @@ from logging_config import RequestLoggingMiddleware, setup_logging
 import alerting
 import calibrations
 import quality
+import weather
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -215,7 +216,8 @@ def ensure_default_registry_stations():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-SKIP_FIELDS = {"station_name", "timestamp"}
+# flow_samples_lmin is a per-second array carried alongside each reading, not a chartable field
+SKIP_FIELDS = {"station_name", "timestamp", "flow_samples_lmin"}
 
 FIELD_CATEGORIES = {
     "temperature": "Intake Air",
@@ -1108,6 +1110,8 @@ def _compute_hourly_aggregation_sync(
     energy_span_hours_by_hour: dict[str, float] = defaultdict(float)
     captured_g_by_hour: dict[str, float] = defaultdict(float)
     intake_g_by_hour: dict[str, float] = defaultdict(float)
+    flow_L_by_hour: dict[str, float] = defaultdict(float)
+    flow_seen_by_hour: set[str] = set()
 
     # Weight and energy each need their own "last valid value" pointer,
     # tracked independently — testbed_1 alone has 2,392 null `energy`
@@ -1126,6 +1130,15 @@ def _compute_hourly_aggregation_sync(
     last_valid_energy: Optional[float] = None
     last_valid_energy_ts: Optional[str] = None
     energy_flat_since_ts: Optional[str] = None
+
+    # A station whose meter normally reports power (the DEM730P only exposes
+    # energy, so its power is always null and must NOT count as a fault) has
+    # a reading with power missing = the meter wasn't reporting at that moment.
+    # Energy consumed across such a stretch can't be trusted, so it is left out
+    # of consumption instead of landing as one lump when the meter comes back.
+    station_reports_power = any(
+        isinstance(r.get("power"), (int, float)) and not isinstance(r.get("power"), bool) for r in sorted_raw
+    )
 
     # Upper-bound counterpart to WEIGHT_NOISE_FLOOR_G above: a positive delta
     # implying a sustained rate faster than this is more likely a balance
@@ -1201,6 +1214,10 @@ def _compute_hourly_aggregation_sync(
         # misclassify a legitimate multi-day accumulation as needing the
         # /1000 correction).
         cur_e = cur_r.get("energy")
+        if station_reports_power and not isinstance(cur_r.get("power"), (int, float)):
+            # Restart the energy baseline after the gap (same as an excluded window).
+            cur_e = None
+            last_valid_energy = last_valid_energy_ts = energy_flat_since_ts = None
         if isinstance(cur_e, (int, float)):
             if last_valid_energy is not None and last_valid_energy_ts is not None:
                 try:
@@ -1263,6 +1280,19 @@ def _compute_hourly_aggregation_sync(
             if abs_h > 0 and vel_mps > 0:
                 dt_s = min(elapsed_s, 120.0)
                 intake_g_by_hour[hour_key] += abs_h * vel_mps * intake_area_m2 * dt_s
+
+        # Flow-meter water production: integrate the measured flow rate
+        # (L/min) over time — trapezoid between the previous and current
+        # reading when both have a flow value, else the current one alone.
+        # Δt is capped at 120s like the intake side above: flow is an
+        # instantaneous rate, so a long gap (offline / Pi restart) can't be
+        # credited with continuous flow. Independent of the weight-based
+        # water_produced_* fields so the two methods can be compared.
+        cur_f, prev_f = cur_r.get("flow_lmin"), prev_r.get("flow_lmin")
+        if isinstance(cur_f, (int, float)) and cur_f >= 0 and not cur_r.get("_after_exclusion"):
+            f_avg = (cur_f + prev_f) / 2.0 if isinstance(prev_f, (int, float)) and prev_f >= 0 else cur_f
+            flow_L_by_hour[hour_key] += f_avg * min(elapsed_s, 120.0) / 60.0
+            flow_seen_by_hour.add(hour_key)
 
     # Admin-entered expected production rate (g/min) for this station, if
     # any — used below to exclude implausibly-high hourly water totals from
@@ -1394,6 +1424,13 @@ def _compute_hourly_aggregation_sync(
             row["energy_per_liter_kWh_L"] = None
             row["water_produced_L"] = row.get("water_produced_g", None) and round(row["water_produced_g"] / 1000.0, 6)
 
+        # Water produced per the flow meter (integrated flow, see above).
+        # None when the hour had no flow readings at all (station without a
+        # flow meter), so it's a gap rather than a false 0.
+        row["water_produced_flow_L"] = (
+            round(flow_L_by_hour[hour_key], 6) if hour_key in flow_seen_by_hour else None
+        )
+
         # Hourly harvesting efficiency (%):
         # (sum of positive weight deltas) / (sum of intake-available water in same intervals) * 100
         # Both sides bridged across hour boundaries above — captured_g the
@@ -1441,6 +1478,7 @@ async def get_hourly_aggregation(
     - mean & std dev for temperature, humidity, velocity (intake & outtake), power
     - absolute humidity (intake & outtake) mean & std dev
     - water_produced_L (delta weight per hour)
+    - water_produced_flow_L (flow meter rate integrated over the hour)
     - energy_consumed_kWh (delta energy per hour)
     - energy_per_liter (kWh/L)
     - harvesting_efficiency_pct_hourly (ratio of captured water vs intake-available water over the hour)
@@ -1460,6 +1498,56 @@ async def get_hourly_aggregation(
 
     cache.set(hourly_cache_key, result, ttl=600)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Weather — ambient conditions at a station
+# ---------------------------------------------------------------------------
+def _station_coords(station_name: str) -> tuple[float, float]:
+    """Coordinates for a station: per-location override, else the default."""
+    if settings.weather_location_coords and "@" in station_name:
+        try:
+            overrides = json.loads(settings.weather_location_coords)
+            label = _normalize_location_label(station_name.split("@", 1)[1])
+            for loc, (lat, lon) in overrides.items():
+                if _normalize_location_label(loc) == label:
+                    return float(lat), float(lon)
+        except Exception:
+            logger.warning("Bad WEATHER_LOCATION_COORDS, using default coordinates")
+    return settings.weather_default_lat, settings.weather_default_lon
+
+
+def _weather_window(start_date: Optional[datetime], end_date: Optional[datetime]) -> tuple[datetime, datetime]:
+    """Default to the last 3 days; make naive datetimes UTC."""
+    end = end_date or datetime.now(timezone.utc)
+    start = start_date or (end - timedelta(days=3))
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if start > end:
+        raise HTTPException(status_code=400, detail="start_date must be before end_date")
+    return start, end
+
+
+@app.get("/stations/{station_name}/weather", tags=["Analytics"])
+async def get_station_weather(
+    station_name: str,
+    start_date: Optional[datetime] = Query(None, description="Start (ISO). Default: 3 days before end"),
+    end_date: Optional[datetime] = Query(None, description="End (ISO). Default: now"),
+):
+    """Hourly ambient weather (temperature, humidity, wind, rain, dust) at the
+    station's location. `rain` and `dust_event` are derived flags; `dust_event`
+    is a possible-dust-event indicator, not an official declaration."""
+    start, end = _weather_window(start_date, end_date)
+    lat, lon = _station_coords(station_name)
+    try:
+        rows = await run_in_threadpool(weather.get_hourly_weather, lat, lon, start, end)
+    except Exception as exc:
+        logger.warning("Weather fetch failed for %s: %s", station_name, exc)
+        raise HTTPException(status_code=502, detail="Weather provider unavailable")
+    return {"station_name": station_name, "latitude": lat, "longitude": lon,
+            "total_hours": len(rows), "data": rows}
 
 
 # ---------------------------------------------------------------------------
@@ -1956,6 +2044,13 @@ def _latest_complete_day(name: str) -> Optional[dict]:
     return done[-1] if done else None
 
 
+def _power_status_for(name: str, now: datetime) -> Optional[dict]:
+    """Whether this station's meter normally reports power and how long it has been missing."""
+    start = now - timedelta(days=settings.alert_lookback_days)
+    hourly = _compute_hourly_aggregation_sync(name, start, now)
+    return alerting.power_status(hourly["data"]) if hourly else None
+
+
 def _alert_overrides() -> dict:
     if not settings.alert_expected_live:
         return {}
@@ -1976,21 +2071,29 @@ def _evaluate_alerts_sync(stations: list[dict], dry_run: bool) -> dict:
     live = alerting.expected_live(stations, now, settings.alert_lookback_days, explicit)
     with ThreadPoolExecutor(max_workers=min(len(live), 8) or 1) as ex:
         qs = dict(zip(live, ex.map(lambda n: _safe(_latest_complete_day, n), live)))
+        ps = dict(zip(live, ex.map(lambda n: _safe(_power_status_for, n, now), live)))
     active = alerting.evaluate(
         stations, {k: v for k, v in qs.items() if v}, now,
         stale_minutes=settings.alert_stale_minutes, lookback_days=settings.alert_lookback_days,
         explicit=explicit, quality_threshold=settings.alert_quality_threshold,
+        power={k: v for k, v in ps.items() if v}, power_missing_hours=settings.alert_power_missing_hours,
     )
     previous = alerting.load_state(db)
     notes, new_state = alerting.plan(active, previous, now, settings.alert_reminder_hours)
     sent = []
+    failed = []
     for kind, alert in notes:
         if dry_run:
             sent.append({"kind": kind, "id": alert["id"], "title": alert["title"], "channels": {"dry_run": "not sent"}})
         else:
-            sent.append({"kind": kind, "id": alert["id"], "title": alert["title"], **alerting.deliver(settings, kind, alert, now)})
+            result = alerting.deliver(settings, kind, alert, now)
+            sent.append({"kind": kind, "id": alert["id"], "title": alert["title"], **result})
+            channels = result.get("channels", {})
+            # Channels were configured but none got through: don't record it as announced.
+            if channels and "log" not in channels and not any(v == "sent" for v in channels.values()):
+                failed.append((kind, alert))
     if not dry_run:
-        alerting.save_state(db, new_state, previous)
+        alerting.save_state(db, alerting.undo_failed(new_state, previous, failed), previous)
     return {
         "checked_at": now.isoformat(),
         "expected_live": sorted(live),
