@@ -1,5 +1,4 @@
 import { Box, Typography, Paper, TextField, Button } from '@mui/material';
-import EmailIcon from '@mui/icons-material/Email';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import PhoneIcon from '@mui/icons-material/Phone';
 
@@ -54,18 +53,6 @@ export default function ContactPage() {
                   Arizona State University<br />
                   Tempe, AZ 85287<br />
                   United States
-                </Typography>
-              </Box>
-            </Box>
-
-            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 3 }}>
-              <EmailIcon sx={{ color: 'primary.main', mt: 0.5 }} />
-              <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                  Email
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  azawh@asu.edu
                 </Typography>
               </Box>
             </Box>
