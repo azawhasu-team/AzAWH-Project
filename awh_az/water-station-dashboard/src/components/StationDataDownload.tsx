@@ -31,6 +31,7 @@ import {
   isVolumeField,
 } from '@/lib/stationFields';
 import { createEnergyJumpTracker } from '@/lib/energyJumps';
+import { fetchHourlyChunked } from '@/lib/hourlyChunks';
 import { convertLiters, convertSpecificEnergy, UNIT_LABEL, type VolumeUnit } from '@/lib/compareMath';
 import { formatPhoenixCsvDateTime } from '@/lib/timezone';
 
@@ -59,6 +60,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
   const [volumeUnit, setVolumeUnit] = useState<VolumeUnit>('L');
   const [rawDownloading, setRawDownloading] = useState(false);
   const [hourlyDownloading, setHourlyDownloading] = useState(false);
+  const [hourlyProgress, setHourlyProgress] = useState('');
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadWarning, setDownloadWarning] = useState<string | null>(null);
 
@@ -366,12 +368,21 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                 const range = { start_date: startDate.toISOString(), end_date: endDate.toISOString() };
                 // Weather is context, not the point of this download: if the weather
                 // provider is down the weather columns are blank rather than failing it.
-                const [resp, wx] = await Promise.all([
-                  apiClient.getHourlyAggregation(stationName, range),
+                // The hourly data is requested a day at a time (see hourlyChunks.ts).
+                const [hourlyRows, wx] = await Promise.all([
+                  fetchHourlyChunked(
+                    (r) => apiClient.getHourlyAggregation(stationName, r),
+                    startDate,
+                    endDate,
+                    { onProgress: (done, total) => setHourlyProgress(total > 1 ? `${done}/${total}` : '') }
+                  ),
                   apiClient.getStationWeather(stationName, range).catch(() => null),
                 ]);
+                if (hourlyRows.length === 0) {
+                  throw new Error(`No readings found for '${stationName}' in the selected range`);
+                }
                 const wxByHour = new Map((wx?.data ?? []).map(w => [w.hour, w]));
-                const exportData = resp.data.map(row => ({
+                const exportData = hourlyRows.map(row => ({
                   'Hour': row.hour,
                   'Arizona Time': formatPhoenixCsvDateTime(row.hour),
                   'Reading Count': row.reading_count,
@@ -431,6 +442,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                 );
               } finally {
                 setHourlyDownloading(false);
+                setHourlyProgress('');
               }
             }}
             sx={{
@@ -442,7 +454,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
               '&:hover': { background: 'linear-gradient(135deg, #7b1038 0%, #5a0d28 100%)' },
             }}
           >
-            {hourlyDownloading ? 'Downloading...' : 'Download Hourly CSV'}
+            {hourlyDownloading ? `Downloading${hourlyProgress ? ` (${hourlyProgress} days)` : '...'}` : 'Download Hourly CSV'}
           </Button>
         </Paper>
       </Box>
