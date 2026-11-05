@@ -33,6 +33,9 @@ class PagedQuery:
     def where(self, *a, **kw):
         return self
 
+    def select(self, *a, **kw):
+        return self
+
     def limit(self, k):
         return PagedQuery(self.station, self.n, self.tracker, self.lo, k)
 

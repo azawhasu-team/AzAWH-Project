@@ -977,11 +977,17 @@ def _compute_hourly_aggregation_sync(
     else:
         if not db:
             return None
+        # Ask Firestore for only the fields the hourly math reads (the same set the
+        # Postgres path selects). Skips the per-second flow_samples_lmin array and
+        # other unused fields, which shrinks every page. It does NOT reduce the
+        # number of document reads billed; that depends on how many readings
+        # fall in the range.
         readings_ref = (
             db.collection(settings.firestore_collection)
             .document(station_name)
             .collection("readings")
             .order_by("timestamp", direction=firestore.Query.ASCENDING)
+            .select(["timestamp", *READING_COLUMNS])
         )
         if start_date:
             readings_ref = readings_ref.where("timestamp", ">=", start_date)
@@ -2044,8 +2050,50 @@ async def delete_calibration(event_id: str, _: None = Depends(require_admin_key)
 ALERT_ANALYSIS_DAYS = 3
 
 
+# Hourly rows already computed for each station, so every alert run only reads
+# the newest hour(s) from Firestore instead of re-reading the whole window.
+# In memory: a restart just means one full read on the next run.
+_ALERT_HOURLY_CACHE: dict[str, dict] = {}
+_HOUR_FMT = "%Y-%m-%dT%H:00:00Z"
+
+
+def _floor_hour(dt: datetime) -> datetime:
+    return dt.replace(minute=0, second=0, microsecond=0)
+
+
 def _alert_hourly(name: str, now: datetime) -> Optional[dict]:
-    return _compute_hourly_aggregation_sync(name, now - timedelta(days=ALERT_ANALYSIS_DAYS), now)
+    """The station's hourly rows for the alert window, read incrementally.
+
+    First call (or after a long idle): read the whole ALERT_ANALYSIS_DAYS window.
+    Later calls: re-read only from the start of the hour that was still partial at
+    the last call, plus 2 minutes of the hour before it so the first reading has a
+    baseline for its water/energy deltas, and keep the cached rows for older hours
+    (those hours are complete and cannot change). Rows older than the window are
+    dropped. If the read fails the cache is left untouched.
+    """
+    window_start = now - timedelta(days=ALERT_ANALYSIS_DAYS)
+    entry = _ALERT_HOURLY_CACHE.get(name)
+    rows: dict[str, dict] = {}
+    if entry and window_start < entry["fetched_at"] <= now:
+        keep_from = _floor_hour(entry["fetched_at"])
+        fetch_from = max(keep_from - timedelta(minutes=2), window_start)
+        fresh = _compute_hourly_aggregation_sync(name, fetch_from, now)
+        keep_key = keep_from.strftime(_HOUR_FMT)
+        rows = {h: r for h, r in entry["rows"].items() if h < keep_key}
+        for r in (fresh or {}).get("data", []):
+            if r["hour"] >= keep_key:
+                rows[r["hour"]] = r
+    else:
+        fresh = _compute_hourly_aggregation_sync(name, window_start, now)
+        rows = {r["hour"]: r for r in (fresh or {}).get("data", [])}
+
+    cutoff = _floor_hour(window_start).strftime(_HOUR_FMT)
+    rows = {h: r for h, r in rows.items() if h >= cutoff}
+    _ALERT_HOURLY_CACHE[name] = {"rows": rows, "fetched_at": now}
+    if not rows:
+        return None
+    ordered = [rows[h] for h in sorted(rows)]
+    return {"station_name": name, "total_hours": len(ordered), "data": ordered}
 
 
 def _latest_complete_day(name: str, hourly: Optional[dict] = None, now: Optional[datetime] = None) -> Optional[dict]:

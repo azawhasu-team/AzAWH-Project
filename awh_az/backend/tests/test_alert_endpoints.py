@@ -151,3 +151,69 @@ def test_manual_ack_api(client, store, silent_fleet):
     assert client.post("/admin/alerts/ack", json={"id": "nope"}, headers=ADMIN).status_code == 404
     assert client.post("/admin/alerts/snooze", json={"id": "s1|stale", "hours": 5}, headers=ADMIN).status_code == 422
     assert client.post("/admin/alerts/ack", json={"id": "s1|stale"}).status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# incremental hourly read for alert runs
+# ---------------------------------------------------------------------------
+def _fake_hourly(calls):
+    """Stands in for the Firestore-backed computation: one row per hour touched
+    by [start, end], valued by its hour so full and incremental reads compare."""
+    def fake(name, start, end):
+        calls.append((start, end))
+        rows, t = [], start.replace(minute=0, second=0, microsecond=0)
+        while t <= end:
+            rows.append({"hour": t.strftime("%Y-%m-%dT%H:00:00Z"), "v": t.strftime("%d%H")})
+            t += timedelta(hours=1)
+        return {"data": rows}
+    return fake
+
+
+def test_alert_hourly_reads_only_new_hours_after_the_first_run(monkeypatch):
+    calls = []
+    monkeypatch.setattr(main, "_compute_hourly_aggregation_sync", _fake_hourly(calls))
+    main._ALERT_HOURLY_CACHE.clear()
+    t0 = datetime(2026, 11, 5, 10, 7, tzinfo=timezone.utc)
+    first = main._alert_hourly("s", t0)
+    assert calls[0] == (t0 - timedelta(days=main.ALERT_ANALYSIS_DAYS), t0)   # full window once
+
+    t1 = t0 + timedelta(minutes=30)
+    second = main._alert_hourly("s", t1)
+    start, end = calls[1]
+    assert start == datetime(2026, 11, 5, 9, 58, tzinfo=timezone.utc) and end == t1   # from 2 min before the 10:00 hour
+    # same hours as a from-scratch read, no duplicates
+    assert [r["hour"] for r in second["data"]] == [r["hour"] for r in first["data"]]
+
+
+def test_alert_hourly_rolls_forward_and_trims_old_hours(monkeypatch):
+    calls = []
+    monkeypatch.setattr(main, "_compute_hourly_aggregation_sync", _fake_hourly(calls))
+    main._ALERT_HOURLY_CACHE.clear()
+    t0 = datetime(2026, 11, 5, 10, 7, tzinfo=timezone.utc)
+    main._alert_hourly("s", t0)
+    t1 = t0 + timedelta(hours=3, minutes=30)
+    out = main._alert_hourly("s", t1)
+    hours = [r["hour"] for r in out["data"]]
+    assert hours == sorted(set(hours))
+    assert hours[-1] == "2026-11-05T13:00:00Z"                                  # new hours picked up
+    assert hours[0] >= (t1 - timedelta(days=main.ALERT_ANALYSIS_DAYS)).replace(minute=0).strftime("%Y-%m-%dT%H:00:00Z")
+    assert calls[-1][0] == datetime(2026, 11, 5, 9, 58, tzinfo=timezone.utc)    # only from the last partial hour
+
+
+def test_alert_hourly_does_full_read_after_long_idle_and_keeps_cache_on_failure(monkeypatch):
+    calls = []
+    monkeypatch.setattr(main, "_compute_hourly_aggregation_sync", _fake_hourly(calls))
+    main._ALERT_HOURLY_CACHE.clear()
+    t0 = datetime(2026, 11, 5, 10, 7, tzinfo=timezone.utc)
+    main._alert_hourly("s", t0)
+    later = t0 + timedelta(days=5)
+    main._alert_hourly("s", later)
+    assert calls[-1][0] == later - timedelta(days=main.ALERT_ANALYSIS_DAYS)     # too old to extend: full window
+
+    cached = dict(main._ALERT_HOURLY_CACHE["s"])
+    def boom(*a):
+        raise RuntimeError("firestore down")
+    monkeypatch.setattr(main, "_compute_hourly_aggregation_sync", boom)
+    with pytest.raises(RuntimeError):
+        main._alert_hourly("s", later + timedelta(minutes=30))
+    assert main._ALERT_HOURLY_CACHE["s"] == cached                              # unchanged, retried next run

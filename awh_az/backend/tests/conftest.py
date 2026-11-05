@@ -39,6 +39,9 @@ class FakeQuery:
     def where(self, *a, **k):
         return self
 
+    def select(self, *a, **k):
+        return self
+
     def start_after(self, *a, **k):
         return self
 
