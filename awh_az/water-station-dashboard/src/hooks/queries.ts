@@ -261,3 +261,16 @@ export function useCalibrations(stationName: string | null, enabled = true) {
     staleTime: 5 * 60_000,
   });
 }
+
+/** Hourly ambient weather over the same date range the station charts show. */
+export function useStationWeatherRange(stationName: string | null, start: Date | null, end: Date | null) {
+  const startIso = start ? start.toISOString() : null;
+  const endIso = end ? end.toISOString() : null;
+  return useQuery({
+    queryKey: ['weather-range', stationName, startIso, endIso],
+    queryFn: () => apiClient.getStationWeather(stationName!, { start_date: startIso!, end_date: endIso! }),
+    enabled: !!stationName && !!startIso && !!endIso,
+    staleTime: 10 * 60_000,
+    retry: 1,
+  });
+}

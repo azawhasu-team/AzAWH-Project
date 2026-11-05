@@ -32,3 +32,21 @@ export function groupWeatherEvents(rows: WeatherRow[]): WeatherEvent[] {
   }
   return events.sort((a, b) => b.start.localeCompare(a.start));
 }
+
+export interface WeatherBand {
+  kind: 'rain' | 'dust_event';
+  startMs: number;
+  /** Exclusive end: the end of the last flagged hour. */
+  endMs: number;
+}
+
+/** Rain / dust events as [start, end) time bands, oldest first, for shading charts. */
+export function weatherBands(rows: WeatherRow[]): WeatherBand[] {
+  return groupWeatherEvents(rows)
+    .map(e => ({
+      kind: e.kind,
+      startMs: new Date(e.start).getTime(),
+      endMs: new Date(e.end).getTime() + 3_600_000,
+    }))
+    .sort((a, b) => a.startMs - b.startMs);
+}

@@ -48,7 +48,8 @@ import { convertLiters, convertSpecificEnergy, UNIT_LABEL, type VolumeUnit } fro
 import { slugify } from '@/lib/slug';
 import { bandsForChart, intervalsInRange, anomalyFreshness } from '@/lib/anomalies';
 import { LIVE_MAX_AGE_SECONDS, ONLINE_MAX_AGE_SECONDS } from '@/lib/freshness';
-import { useStations, useLiveReading, useLatestReadings, useStationReadingsRange, useHourly, useAnomalies } from '@/hooks/queries';
+import { useStations, useLiveReading, useLatestReadings, useStationReadingsRange, useHourly, useAnomalies, useStationWeatherRange } from '@/hooks/queries';
+import { weatherBands } from '@/lib/weatherEvents';
 import { buildParameterCategories, buildChartSeries } from '@/lib/stationChartData';
 
 export default function StationDetails() {
@@ -251,6 +252,12 @@ export default function StationDetails() {
 
   // Model-flagged unusual-activity periods (batch export, see lib/anomalies.ts)
   const anomaliesQuery = useAnomalies();
+
+  // Rain / dust periods over the charts' date range, shaded behind the data.
+  const weatherRangeQuery = useStationWeatherRange(stationName, startDate, endDate);
+  const [showWeatherBands, setShowWeatherBands] = useState(true);
+  const wxBands = useMemo(() => weatherBands(weatherRangeQuery.data?.data ?? []), [weatherRangeQuery.data]);
+  const chartWeatherBands = showWeatherBands && wxBands.length > 0 ? wxBands : undefined;
   const [showAnomalies, setShowAnomalies] = useState(true);
   const anomalyFile = anomaliesQuery.data ?? null;
   const stationAnomalies = stationName ? anomalyFile?.stations[stationName] : undefined;
@@ -961,6 +968,23 @@ export default function StationDetails() {
 
       {stationName && <WeatherPanel stationName={stationName} />}
 
+      {wxBands.length > 0 && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 1 }}>
+          <FormControlLabel
+            control={<Switch size="small" checked={showWeatherBands} onChange={(e) => setShowWeatherBands(e.target.checked)} />}
+            label="Show rain and dust on charts"
+          />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, color: 'text.secondary', fontSize: '0.75rem' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+              <Box sx={{ width: 14, height: 14, borderRadius: 0.5, bgcolor: 'rgba(66,165,245,0.35)', border: '1px solid rgba(66,165,245,0.7)' }} /> Rain
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+              <Box sx={{ width: 14, height: 14, borderRadius: 0.5, bgcolor: 'rgba(176,141,87,0.45)', border: '1px solid rgba(176,141,87,0.8)' }} /> Possible dust event
+            </Box>
+          </Box>
+        </Box>
+      )}
+
       <AlertsPanel
         active={alertsActive}
         recent={alertsRecent}
@@ -1039,6 +1063,7 @@ export default function StationDetails() {
           transition={{ duration: 0.5, delay: 0.3 + i * 0.05 }}
         >
           <FeaturePlot
+            weatherBands={chartWeatherBands}
             data={data}
             feature={`${fieldCategories[field] || ''} - ${fieldDisplayNames[field] || field}` as FeatureType}
             startDate={format(startDate, 'yyyy-MM-dd')}
@@ -1074,6 +1099,7 @@ export default function StationDetails() {
             </Box>
           ) : (
             <FeaturePlot
+              weatherBands={chartWeatherBands}
               data={hourlyWaterProductionData}
               feature={'Water Production - Water Production Rate, Mass (Hourly)' as FeatureType}
               startDate={format(startDate, 'yyyy-MM-dd')}
@@ -1095,6 +1121,7 @@ export default function StationDetails() {
           transition={{ duration: 0.5, delay: 0.38 }}
         >
           <FeaturePlot
+            weatherBands={chartWeatherBands}
             data={hourlyFlowWaterProductionData}
             feature={'Water Production - Water Production Rate, Flow (Hourly)' as FeatureType}
             startDate={format(startDate, 'yyyy-MM-dd')}
@@ -1115,6 +1142,7 @@ export default function StationDetails() {
           transition={{ duration: 0.5, delay: 0.4 }}
         >
           <FeaturePlot
+            weatherBands={chartWeatherBands}
             data={hourlyEnergyPerLiterData}
             feature={'Efficiency - Specific Energy Consumption (Hourly)' as FeatureType}
             startDate={format(startDate, 'yyyy-MM-dd')}
@@ -1135,6 +1163,7 @@ export default function StationDetails() {
           transition={{ duration: 0.5, delay: 0.45 }}
         >
           <FeaturePlot
+            weatherBands={chartWeatherBands}
             data={hourlyEfficiencyData}
             feature={'Efficiency - Harvesting Efficiency (Hourly)' as FeatureType}
             startDate={format(startDate, 'yyyy-MM-dd')}

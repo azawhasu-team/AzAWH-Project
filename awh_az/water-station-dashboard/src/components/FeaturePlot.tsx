@@ -23,6 +23,7 @@ import { formatPhoenixTime, formatPhoenixFullDateTime, phoenixDateKey } from '@/
 import { downsampleMinMax } from '@/lib/downsample';
 import { detectPowerStatus } from '@/lib/powerStatus';
 import { snapBandToDates, type AnomalyBand } from '@/lib/anomalies';
+import type { WeatherBand } from '@/lib/weatherEvents';
 import { describeChart } from '@/lib/chartSummary';
 import { scaleWindow, panWindow, isFullWindow, type TimeWindow } from '@/lib/chartZoom';
 
@@ -44,6 +45,8 @@ interface FeaturePlotProps {
   chartType?: 'area' | 'bar';
   /** Model-flagged unusual-activity intervals to shade (continuous charts only). */
   anomalyBands?: AnomalyBand[];
+  /** Rain / dust-event periods to shade faintly behind the data (blue = rain, tan = dust). */
+  weatherBands?: WeatherBand[];
   /** Shared time window so zooming any station chart updates all of them. */
   zoomRange?: ChartZoomRange | null;
   onZoomChange?: (range: ChartZoomRange | null) => void;
@@ -61,6 +64,7 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
   paramUnits,
   chartType = 'area',
   anomalyBands,
+  weatherBands,
   zoomRange = null,
   onZoomChange,
   powerStatus = false,
@@ -147,6 +151,18 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
       return snapped ? [{ ...snapped, eventNumber: b.eventNumber }] : [];
     });
   }, [isBar, anomalyBands, plotData]);
+
+  // Rain / dust shading. Unlike the anomaly bands this also works on the hourly
+  // bar charts, where each flagged hour snaps to its own bar.
+  const snappedWeather = React.useMemo(() => {
+    if (!weatherBands?.length) return [];
+    const dates = plotData.map(d => d.date);
+    return weatherBands.flatMap((b, i) => {
+      // endMs is exclusive (the end of the last flagged hour); snap to the last point inside it.
+      const snapped = snapBandToDates(dates, b.startMs, b.endMs - 1);
+      return snapped ? [{ ...snapped, kind: b.kind, key: `${b.kind}-${i}` }] : [];
+    });
+  }, [weatherBands, plotData]);
 
   // Touch zoom (phones): pinch to zoom around the fingers, one finger to pan
   // once zoomed, plus +/- buttons as a fallback. The chart's own drag-select
@@ -454,6 +470,19 @@ const FeaturePlot: React.FC<FeaturePlotProps> = ({
                 iconType="circle"
                 iconSize={10}
               />
+              {snappedWeather.map(b => (
+                <ReferenceArea
+                  key={`wx-${b.key}`}
+                  yAxisId="left"
+                  x1={b.x1}
+                  x2={b.x2}
+                  fill={b.kind === 'dust_event' ? '#b08d57' : '#42a5f5'}
+                  fillOpacity={b.kind === 'dust_event' ? 0.28 : 0.16}
+                  stroke={b.kind === 'dust_event' ? '#b08d57' : '#42a5f5'}
+                  strokeOpacity={0.35}
+                  ifOverflow="hidden"
+                />
+              ))}
               {flatPower ? (
                 <>
                   <Area
