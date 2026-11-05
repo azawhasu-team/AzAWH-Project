@@ -19,6 +19,7 @@ Rules today:
 - **Station not sending data**: silent longer than `ALERT_STALE_MINUTES`, critical once silent for 3x that or 6 h.
 - **Poor data quality**: yesterday's score below `ALERT_QUALITY_THRESHOLD`.
 - **Station turned off**: still reporting but no energy used for about 2 hours (same idea as the dashboard's "Station is off"). When it runs again you get a RESOLVED email, which is the "turned on" message.
+- **Energy meter not updating**: no energy counted for about 2 hours while the intake fans are moving air (>= 0.3 m/s), so the station is on but the meter is stuck (the DEM730P failure: the Pi keeps sending the last value, so it never looks null). Critical after 6 h. Replaces "turned off" in that case. The Pi also restarts the meter reader by itself after 10 minutes of unchanged energy while the fans run (`auto_recovery.py`), then the whole program if that does not help.
 - **Power meter not reporting**: a meter that normally reports power/voltage has sent none for `ALERT_POWER_MISSING_HOURS` (2) hours. Meters that never report power (DEM730P, energy only) are never flagged, and a power-meter fault is not also reported as "turned off".
 
 A station is *expected live* if it reported within `ALERT_LOOKBACK_DAYS` (7), so retired stations never alert. Override or add stations with `ALERT_EXPECTED_LIVE='{"station_name": 90}'` (max silent minutes).

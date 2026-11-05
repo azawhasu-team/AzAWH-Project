@@ -32,6 +32,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 STATE_COLLECTION = "alert_state"
+RUNNING_VELOCITY_MPS = 0.3  # intake airflow at/above this (m/s) means the station is running
 SNOOZE_CHOICES_HOURS = (1, 4, 24)
 LINK_TTL_HOURS = 72
 
@@ -106,7 +107,23 @@ def power_status(hourly_rows: list[dict]) -> dict:
         if used_energy(r):
             break
         off += 1
-    return {"reports_power": reports, "missing_hours": missing, "reports_energy": reports_energy, "off_hours": off}
+
+    # Same trailing no-energy hours, but only those where the fans were moving air:
+    # the meter is not counting while the station is clearly running, which is a
+    # stuck/dead meter, not "turned off".
+    def running(r):
+        v = r.get("velocity_mean")
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and v >= RUNNING_VELOCITY_MPS
+
+    stuck = 0
+    for r in reversed(hourly_rows):
+        if used_energy(r) or not running(r):
+            break
+        stuck += 1
+    return {
+        "reports_power": reports, "missing_hours": missing, "reports_energy": reports_energy,
+        "off_hours": off, "stuck_hours": stuck if reports_energy else 0,
+    }
 
 
 def evaluate(
@@ -164,7 +181,21 @@ def evaluate(
         # plus the last full hour). Skipped when the power meter itself is the
         # problem: its energy is excluded then, which would look like "off".
         power_fault = bool(ps and ps["reports_power"] and ps["missing_hours"] >= power_missing_hours)
-        if ps and ps.get("reports_energy") and ps.get("off_hours", 0) >= off_hours and not power_fault and last is not None:
+        stuck_hrs = (ps or {}).get("stuck_hours", 0)
+        energy_stuck = bool(ps and ps.get("reports_energy") and stuck_hrs >= off_hours and last is not None)
+        if energy_stuck:
+            alerts.append(
+                Alert(
+                    f"{name}|energy_stuck", name, display, "energy_stuck",
+                    "critical" if stuck_hrs >= 6 else "warning",
+                    f"{display}: energy meter not updating",
+                    f"No energy counted for about {stuck_hrs} h although the fans are running, so the "
+                    "station is on but the meter is stuck. That stretch is left out of consumption. "
+                    "The station restarts the meter reader by itself; if this persists, check the meter "
+                    "and its USB/RS485 connection.",
+                )
+            )
+        if ps and ps.get("reports_energy") and ps.get("off_hours", 0) >= off_hours and not power_fault and not energy_stuck and last is not None:
             alerts.append(
                 Alert(
                     f"{name}|station_off", name, display, "station_off", "warning",

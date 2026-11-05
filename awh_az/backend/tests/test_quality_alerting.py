@@ -250,6 +250,42 @@ def test_power_meter_fault_is_not_also_reported_as_station_off():
 
 
 # ---------------------------------------------------------------------------
+# energy_stuck: no energy counted while the fans are running (frozen DEM730P)
+# ---------------------------------------------------------------------------
+def _en_v(*pairs):
+    return [{"energy_consumed_kWh": e, "velocity_mean": v, "power_mean": None, "reading_count": 60} for e, v in pairs]
+
+
+def test_no_energy_while_fans_run_is_energy_stuck_not_station_off():
+    now = datetime(2026, 10, 31, 12, tzinfo=timezone.utc)
+    stations = [{"station_name": "a", "metadata": {"last_reading": now.isoformat()}}]
+    st = alerting.power_status(_en_v((0.8, 1.9), (0.8, 1.9), (None, 1.9), (None, 1.9)))
+    assert st["stuck_hours"] == 2 and st["off_hours"] == 2
+    out = alerting.evaluate(stations, {}, now, power={"a": st})
+    assert [a.rule for a in out] == ["energy_stuck"] and "not updating" in out[0].title
+    assert out[0].severity == "warning"
+    long = alerting.power_status(_en_v((0.8, 1.9), *[(None, 1.9)] * 6))
+    assert alerting.evaluate(stations, {}, now, power={"a": long})[0].severity == "critical"
+
+
+def test_no_energy_with_fans_off_is_still_station_off():
+    now = datetime(2026, 10, 31, 12, tzinfo=timezone.utc)
+    stations = [{"station_name": "a", "metadata": {"last_reading": now.isoformat()}}]
+    st = alerting.power_status(_en_v((0.8, 1.9), (0.8, 1.9), (None, 0.0), (None, 0.0)))
+    assert st["stuck_hours"] == 0
+    out = alerting.evaluate(stations, {}, now, power={"a": st})
+    assert [a.rule for a in out] == ["station_off"]
+
+
+def test_energy_stuck_clears_when_energy_counts_again():
+    now = datetime(2026, 10, 31, 12, tzinfo=timezone.utc)
+    stations = [{"station_name": "a", "metadata": {"last_reading": now.isoformat()}}]
+    ok = alerting.power_status(_en_v((0.8, 1.9), (None, 1.9), (None, 1.9), (0.8, 1.9)))
+    assert ok["stuck_hours"] == 0
+    assert alerting.evaluate(stations, {}, now, power={"a": ok}) == []
+
+
+# ---------------------------------------------------------------------------
 # delivery failures must be retried, and the HTTPS (Brevo API) sender
 # ---------------------------------------------------------------------------
 def test_failed_notification_is_not_recorded_as_announced():

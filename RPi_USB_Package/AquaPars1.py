@@ -35,6 +35,8 @@ FLOW_SAMPLE_SEC = 1
 MAX_FLOW_SAMPLES_PER_UPLOAD = 3600
 
 READER_STALE_SEC = 45        # if no new data for this many seconds, restart that reader
+ENERGY_STUCK_RESTART_SEC = 600  # energy counter unchanged this long while the fans run -> auto-recover
+RUNNING_VELOCITY_MPS = 0.3     # intake airflow above this means the station is running
 POWER_NULL_RESTART_SEC = 120  # power/voltage missing this long (on a meter that normally reports them) -> auto-recover
 WATCHDOG_POLL_SEC = 5        # how often the watchdog checks staleness
 
@@ -73,7 +75,7 @@ class StationController:
         self.flow_tuple = None
         # Every 1 s flow sample since the last cloud upload: (flow_lmin, hz)
         self._flow_window = []
-        self.power_recovery = PowerRecovery(null_after_s=POWER_NULL_RESTART_SEC)
+        self.power_recovery = PowerRecovery(null_after_s=POWER_NULL_RESTART_SEC, energy_stuck_s=ENERGY_STUCK_RESTART_SEC, is_running=self._station_running)
         self._flow_lock = threading.Lock()
         self.intake_air_data = (None, None, None, "m/s")
         self.outtake_air_data = (None, None, None, "m/s")
@@ -218,7 +220,7 @@ class StationController:
             })
         except Exception as e:
             print(f"[Recovery] Could not save run settings: {e}")
-        self.power_recovery = PowerRecovery(null_after_s=POWER_NULL_RESTART_SEC)
+        self.power_recovery = PowerRecovery(null_after_s=POWER_NULL_RESTART_SEC, energy_stuck_s=ENERGY_STUCK_RESTART_SEC, is_running=self._station_running)
 
         self.uploader.start()
         self._start_balance_reader()
@@ -398,7 +400,7 @@ class StationController:
 
                 action = self.power_recovery.poll()
                 if action == RESTART_READER:
-                    print("[Recovery] Power/voltage missing. Restarting the power reader...")
+                    print("[Recovery] Power/energy meter not updating. Restarting the power reader...")
                     self._restart_reader("power")
                 elif action == RESTART_PROGRAM:
                     self._restart_whole_program()
@@ -406,6 +408,11 @@ class StationController:
             except Exception as e:
                 print(f"[Watchdog] Error: {e}")
             time.sleep(WATCHDOG_POLL_SEC)
+
+    def _station_running(self):
+        """True while the fans are moving air (so flat energy would be a meter fault, not 'off')."""
+        v = self.intake_air_data[1] if self.intake_air_data else None
+        return isinstance(v, (int, float)) and v >= RUNNING_VELOCITY_MPS
 
     def _restart_whole_program(self):
         """Last resort when restarting the power reader did not bring power back."""

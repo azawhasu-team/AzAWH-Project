@@ -16,11 +16,13 @@ def make(**kw):
     return ar.PowerRecovery(null_after_s=120, max_reader_restarts=2, clock=c, **kw), c
 
 
-def test_meter_that_never_reports_power_is_never_a_fault():
-    # DEM730P: energy only, voltage/power always None by design.
+def test_meter_that_never_reports_power_is_not_a_power_fault():
+    # DEM730P: energy only, voltage/power always None by design. As long as its
+    # energy keeps counting, that is healthy. (A frozen energy value is a fault:
+    # see the energy-stuck tests below.)
     r, c = make()
-    for _ in range(50):
-        r.on_power(None, None, None, 257.65)
+    for i in range(50):
+        r.on_power(None, None, None, 257.65 + i * 0.01)
         c.t += 60
         assert r.poll() == ar.OK
 
@@ -70,3 +72,62 @@ def test_config_round_trip_keeps_restart_history(tmp_path):
     assert ar.load_config(str(tmp_path / "missing.json")) is None
     (tmp_path / "bad.json").write_text("{not json")
     assert ar.load_config(str(tmp_path / "bad.json")) is None
+
+
+# ---- energy stuck (the DEM730P failure: Pi keeps sending the last value) -----
+def make_energy(running=True, **kw):
+    c = Clock()
+    state = {"running": running}
+    r = ar.PowerRecovery(null_after_s=120, max_reader_restarts=2, clock=c, energy_stuck_s=600,
+                         is_running=lambda: state["running"], **kw)
+    return r, c, state
+
+
+def test_energy_only_meter_that_keeps_counting_is_ok():
+    r, c, _ = make_energy()
+    for i in range(30):
+        c.t += 60
+        r.on_power(None, None, None, 100.0 + i * 0.01)
+        assert r.poll() == ar.OK
+
+
+def test_energy_frozen_while_running_restarts_reader_then_program():
+    r, c, _ = make_energy()
+    r.on_power(None, None, None, 231.94)
+    actions = []
+    for _ in range(40):
+        c.t += 60
+        r.on_power(None, None, None, 231.94)  # same stale value every time
+        a = r.poll()
+        if a != ar.OK:
+            actions.append(a)
+    assert actions[:3] == [ar.RESTART_READER, ar.RESTART_READER, ar.RESTART_PROGRAM]
+
+
+def test_energy_flat_while_station_off_is_not_a_fault():
+    r, c, state = make_energy(running=False)
+    r.on_power(None, None, None, 231.94)
+    for _ in range(60):
+        c.t += 60
+        r.on_power(None, None, None, 231.94)
+        assert r.poll() == ar.OK
+
+
+def test_energy_missing_while_running_is_a_fault():
+    r, c, _ = make_energy()
+    r.on_power(None, None, None, 50.0)
+    out = []
+    for _ in range(15):
+        c.t += 60
+        r.on_power(None, None, None, None)
+        out.append(r.poll())
+    assert ar.RESTART_READER in out
+
+
+def test_energy_recovery_resets_the_ladder():
+    r, c, _ = make_energy()
+    r.on_power(None, None, None, 1.0)
+    c.t += 700
+    assert r.poll() == ar.RESTART_READER
+    r.on_power(None, None, None, 1.5)  # counting again
+    assert r.reader_restarts == 0

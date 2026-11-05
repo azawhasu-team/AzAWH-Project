@@ -3,12 +3,18 @@
 Decision logic (PowerRecovery) is pure so it can be tested without hardware;
 the helpers below it save the run settings and restart the whole program.
 
-Only meters that NORMALLY report power are watched. The DEM730P (read_power_new)
-only exposes energy, so its voltage/power are always None by design and must not
-count as a fault: a meter becomes "expected to report power" the first time a
-reading with power or voltage arrives.
+Two faults are watched:
+  * power/voltage missing, on meters that NORMALLY report power. The DEM730P
+    (read_power_new) only exposes energy, so its voltage/power are always None
+    by design and are not a fault: a meter becomes "expected to report power"
+    the first time a reading with power or voltage arrives.
+  * energy stuck: the energy counter has not changed (or has been missing) for
+    `energy_stuck_s` while the station is running (fans on, per `is_running`).
+    This is how the DEM730P fails: the Pi keeps sending the last value, so it
+    never looks null. Not judged while the station is off, when energy
+    legitimately stays flat.
 
-Escalation, once power/voltage has been missing for `null_after_s`:
+Escalation, once either fault has lasted its window (`null_after_s` / `energy_stuck_s`):
     1..max_reader_restarts   -> restart just the power reader (cheap)
     after that               -> restart the whole program (re-exec + auto-start)
 A good reading resets the count. Program restarts are capped per hour so a
@@ -29,13 +35,19 @@ RESTART_PROGRAM = "restart_program"
 
 
 class PowerRecovery:
-    def __init__(self, null_after_s=120, max_reader_restarts=3, clock=time.time):
+    def __init__(self, null_after_s=120, max_reader_restarts=3, clock=time.time,
+                 energy_stuck_s=600, is_running=None):
         self.null_after_s = null_after_s
         self.max_reader_restarts = max_reader_restarts
+        self.energy_stuck_s = energy_stuck_s
+        self.is_running = is_running  # callable -> bool; None means "always running"
         self._clock = clock
         self.reports_power = False
+        self.reports_energy = False
         self.reader_restarts = 0
         self._last_good = clock()
+        self._last_energy = None
+        self._energy_good = clock()
 
     def on_power(self, voltage, current, power, energy):
         """Call from the power reader's callback."""
@@ -44,16 +56,34 @@ class PowerRecovery:
         if power is not None and voltage is not None:
             self._last_good = self._clock()
             self.reader_restarts = 0
+        if energy is not None:
+            self.reports_energy = True
+            if energy != self._last_energy:
+                self._last_energy = energy
+                self._energy_good = self._clock()
+                self.reader_restarts = 0
+
+    def _running(self):
+        try:
+            return True if self.is_running is None else bool(self.is_running())
+        except Exception:
+            return True
 
     def poll(self):
         """Call periodically; returns what the watchdog should do now."""
-        if not self.reports_power:
-            return OK
         now = self._clock()
-        if now - self._last_good <= self.null_after_s:
+        power_fault = self.reports_power and now - self._last_good > self.null_after_s
+        energy_fault = False
+        if self.reports_energy:
+            if not self._running():
+                self._energy_good = now  # off: flat energy is expected
+            else:
+                energy_fault = now - self._energy_good > self.energy_stuck_s
+        if not (power_fault or energy_fault):
             return OK
         # Give whatever we do next a full window to take effect before judging again.
         self._last_good = now
+        self._energy_good = now
         if self.reader_restarts < self.max_reader_restarts:
             self.reader_restarts += 1
             return RESTART_READER
