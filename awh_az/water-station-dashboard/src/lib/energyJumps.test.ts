@@ -24,4 +24,25 @@ describe('createEnergyJumpTracker', () => {
     expect(step(10.02, MIN).isJump).toBe(false);
     expect(step(15, 2 * MIN).isJump).toBe(false); // sharp, but not preceded by a flat stretch
   });
+
+  it('drops a frozen meter catching up after a long data gap, even though the average draw is plausible', () => {
+    const step = createEnergyJumpTracker();
+    const out = [
+      [100, 0], [100, 5], [100, 15],        // frozen
+      [126.4, 24 * 60 + 15],                // 24 h later: +26.4 kWh (~1.1 kW average)
+      [126.42, 24 * 60 + 16],               // counting normally again
+    ].map(([e, m]) => step(e, m * MIN));
+    expect(out[3].isJump).toBe(true);
+    expect(out[3].increment).toBe(0);
+    expect(out[4].increment).toBeCloseTo(0.02);
+  });
+
+  it('keeps the energy used across a gap when the meter was counting normally before it', () => {
+    const step = createEnergyJumpTracker();
+    step(100, 0);
+    step(100.02, MIN);                      // counting: not flat
+    const after = step(102.5, 3 * 60 * MIN); // 3 h gap, +2.4 kWh of real consumption
+    expect(after.isJump).toBe(false);
+    expect(after.increment).toBeCloseTo(2.48);
+  });
 });

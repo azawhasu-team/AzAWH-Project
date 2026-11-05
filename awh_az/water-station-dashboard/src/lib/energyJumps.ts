@@ -14,6 +14,14 @@ export const ENERGY_JUMP_MAX_KW = 3;
  * so the floor keeps those from being misread as jumps.
  */
 export const ENERGY_JUMP_MIN_KWH = 0.5;
+/**
+ * A frozen meter that catches up after a data gap: the counter sat flat, nothing
+ * arrived for this long, and then it leaps by everything it missed. The total is
+ * plausible (spread over the gap it is under ENERGY_JUMP_MAX_KW on average) but
+ * it would land in one step, so that step is excluded like a jump. A meter that
+ * was counting normally before the gap is unaffected.
+ */
+export const ENERGY_STALL_CATCHUP_MIN_S = 60 * 60;
 
 export interface EnergyStep {
   /** Cumulative energy with all detected jumps subtracted out. */
@@ -41,7 +49,9 @@ export function createEnergyJumpTracker() {
         const flatS = (prevMs - flatSinceMs) / 1000;
         const elapsedH = Math.max(tsMs - prevMs, 0) / 3_600_000;
         const sharp = delta > Math.max(ENERGY_JUMP_MAX_KW * elapsedH, ENERGY_JUMP_MIN_KWH);
-        if (flatS >= ENERGY_JUMP_FLAT_MIN_S && sharp) {
+        const stallCatchUp =
+          elapsedH * 3600 >= ENERGY_STALL_CATCHUP_MIN_S && delta > ENERGY_JUMP_MIN_KWH;
+        if (flatS >= ENERGY_JUMP_FLAT_MIN_S && (sharp || stallCatchUp)) {
           isJump = true;
           offset += delta;
         } else {

@@ -12,6 +12,7 @@ vi.mock('@/hooks/queries', () => ({
   useStations: () => h.q,
   useLatestReadingsMany: () => h.readings,
   useStationQuality: () => ({ data: undefined }),
+  useEfficiencyDaily: () => ({ data: undefined, isLoading: false, isError: false }),
 }));
 vi.mock('@/hooks/useFreshnessClock', () => ({ useFreshnessClock: () => Date.now() }));
 

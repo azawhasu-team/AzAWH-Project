@@ -3,6 +3,7 @@
 import React, { useMemo } from 'react';
 import { Typography, Box, Fade, Skeleton, Alert } from '@mui/material';
 import StationCard from '@/components/StationCard';
+import EfficiencyTrend from '@/components/EfficiencyTrend';
 import { useStations, useLatestReadingsMany } from '@/hooks/queries';
 import { useFreshnessClock } from '@/hooks/useFreshnessClock';
 import { filterVisibleStations } from '@/lib/hiddenStations';
@@ -157,6 +158,8 @@ export default function StationsPage() {
       >
         Monitor and manage water stations across all regions
       </Typography>
+
+      <EfficiencyTrend />
 
       <Box sx={stationGridSx}>
         {onlineStationCards.map((station, index) => (

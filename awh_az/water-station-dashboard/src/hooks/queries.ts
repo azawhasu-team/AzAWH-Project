@@ -274,3 +274,14 @@ export function useStationWeatherRange(stationName: string | null, start: Date |
     retry: 1,
   });
 }
+
+/** Daily kWh per litre per station. Polls every few seconds while the backend is still warming its cache. */
+export function useEfficiencyDaily(days = 30) {
+  return useQuery({
+    queryKey: ['efficiency-daily', days],
+    queryFn: () => apiClient.getEfficiencyDaily(days),
+    staleTime: 5 * 60_000,
+    retry: 1,
+    refetchInterval: (query) => (query.state.data?.warming ? 5_000 : false),
+  });
+}

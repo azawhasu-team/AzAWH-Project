@@ -42,6 +42,13 @@ describe('forwardToBackend', () => {
     expect(f).not.toHaveBeenCalled();
   });
 
+  it('forwards the read-only efficiency route', async () => {
+    const f = upstreamOk();
+    const r = await forwardToBackend(req('efficiency/daily?days=30'), ['efficiency', 'daily'], { ...base, fetchImpl: f });
+    expect(r.status).toBe(200);
+    expect(String((f.mock.calls[0] as unknown[])[0])).toContain('/efficiency/daily');
+  });
+
   it('keeps "#", "?" and spaces inside a station name when forwarding', async () => {
     const f = upstreamOk();
     // Next gives catch-all params decoded; a raw "#" would truncate the URL.

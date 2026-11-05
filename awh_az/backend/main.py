@@ -14,6 +14,7 @@ import io
 import csv
 import os
 import logging
+import threading
 
 import base64
 import tempfile
@@ -46,6 +47,7 @@ from config import settings
 from cache import cache, get_stations_cache_key, get_station_readings_cache_key, invalidate_station_cache
 from logging_config import RequestLoggingMiddleware, setup_logging
 import alerting
+import efficiency
 import calibrations
 import quality
 import weather
@@ -1091,6 +1093,13 @@ def _compute_hourly_aggregation_sync(
     # Floor so stations still uploading raw Wh (KNOWN_ISSUES.md #7), where an
     # ordinary step is tens of units, aren't misread as jumps.
     ENERGY_JUMP_MIN_KWH = 0.5
+    # A frozen meter that catches up after a data gap: the counter sat flat, no
+    # readings arrived for an hour or more, and then it leaps by everything it
+    # missed. The total is plausible (it is spread over the whole gap, well under
+    # ENERGY_JUMP_MAX_KW on average), but it would land entirely in the first hour
+    # back (e.g. 26 kWh from 3 readings), so that step is left out like a jump.
+    # A meter that was counting normally before the gap is NOT affected.
+    ENERGY_STALL_CATCHUP_MIN_S = 60 * 60
 
     # Station metadata (Firestore is the source of truth for it regardless of
     # whether readings came from Postgres or Firestore). Fetched before the
@@ -1248,7 +1257,12 @@ def _compute_hourly_aggregation_sync(
                     e_delta > max(ENERGY_JUMP_MAX_KW * elapsed_s / 3600.0, ENERGY_JUMP_MIN_KWH)
                     and flat_s >= ENERGY_JUMP_FLAT_MIN_S
                 )
-                if not is_energy_jump:
+                is_stall_catchup = (
+                    flat_s >= ENERGY_JUMP_FLAT_MIN_S
+                    and elapsed_s >= ENERGY_STALL_CATCHUP_MIN_S
+                    and e_delta > ENERGY_JUMP_MIN_KWH
+                )
+                if not (is_energy_jump or is_stall_catchup):
                     energy_raw_delta_by_hour[hour_key] += e_delta
                     energy_span_hours_by_hour[hour_key] += elapsed_s / 3600.0
                 if cur_e != last_valid_energy:
@@ -2041,6 +2055,78 @@ async def delete_calibration(event_id: str, _: None = Depends(require_admin_key)
 
 
 # ---------------------------------------------------------------------------
+# Efficiency: daily energy per litre, per station
+# ---------------------------------------------------------------------------
+EFFICIENCY_REFRESH_SECONDS = 600
+_EFFICIENCY_BUSY: set[str] = set()
+_EFFICIENCY_LOCK = threading.Lock()
+_EFFICIENCY_POOL = ThreadPoolExecutor(max_workers=2)
+
+
+def _refresh_efficiency_cache(name: str, days: int) -> None:
+    key = f"{name}|{days}"
+    try:
+        _cached_hourly(name, datetime.now(timezone.utc), days)
+    except Exception as e:  # noqa: BLE001 - leave the cache as it was; the next request retries
+        logger.warning("Efficiency refresh failed for %s: %s", name, e)
+    finally:
+        with _EFFICIENCY_LOCK:
+            _EFFICIENCY_BUSY.discard(key)
+
+
+def _efficiency_snapshot(stations: list[dict], days: int) -> dict:
+    """Daily kWh/L for every station that reported within the window, built from
+    the incremental hourly cache. A station whose hours are not cached yet (first
+    request after a restart) is read in the background so this call never waits on
+    a long Firestore read; the response says `warming` until they are in."""
+    now = datetime.now(timezone.utc)
+    by_name = {s["station_name"]: s for s in stations}
+    live = alerting.expected_live(stations, now, days, {})
+    warming = False
+    out = []
+    for name in sorted(live):
+        key = f"{name}|{days}"
+        entry = _ALERT_HOURLY_CACHE.get(key)
+        stale = entry is None or (now - entry["fetched_at"]).total_seconds() > EFFICIENCY_REFRESH_SECONDS
+        if stale:
+            with _EFFICIENCY_LOCK:
+                start_refresh = key not in _EFFICIENCY_BUSY
+                if start_refresh:
+                    _EFFICIENCY_BUSY.add(key)
+            if start_refresh:  # submitted outside the lock: the job takes it again when it finishes
+                _EFFICIENCY_POOL.submit(_refresh_efficiency_cache, name, days)
+        if entry is None:
+            warming = True
+            continue
+        series = efficiency.daily_energy_per_liter([entry["rows"][h] for h in sorted(entry["rows"])], now)
+        if not any(d["kwh_per_L"] is not None for d in series):
+            continue
+        s = by_name.get(name, {})
+        out.append(
+            {
+                "station_name": name,
+                "display_name": s.get("display_name") or name,
+                "days": series,
+                **efficiency.trend_summary(series),
+            }
+        )
+    return {"days": days, "warming": warming, "updated_at": now.isoformat(), "stations": out}
+
+
+@app.get("/efficiency/daily", tags=["Analytics"])
+async def get_efficiency_daily(days: int = Query(30, ge=7, le=60)):
+    """Daily energy per litre of water (kWh/L, lower is better) for each station
+    that reported recently: total energy / total water per Phoenix-local day, only
+    over hours where both are known. `warming: true` means some stations are still
+    being read for the first time; ask again in a few seconds."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not initialised")
+    stations = await get_stations()
+    stations = [s if isinstance(s, dict) else s.dict() for s in stations]
+    return await run_in_threadpool(_efficiency_snapshot, stations, days)
+
+
+# ---------------------------------------------------------------------------
 # Alert notifications (Slack / email) with acknowledge + snooze
 # ---------------------------------------------------------------------------
 # Alert runs look at this many days of hourly data per station, fetched ONCE and
@@ -2062,7 +2148,12 @@ def _floor_hour(dt: datetime) -> datetime:
 
 
 def _alert_hourly(name: str, now: datetime) -> Optional[dict]:
-    """The station's hourly rows for the alert window, read incrementally.
+    """The station's hourly rows for the alert window, read incrementally."""
+    return _cached_hourly(name, now, ALERT_ANALYSIS_DAYS)
+
+
+def _cached_hourly(name: str, now: datetime, days: int) -> Optional[dict]:
+    """The station's hourly rows for the last `days` days, read incrementally.
 
     First call (or after a long idle): read the whole ALERT_ANALYSIS_DAYS window.
     Later calls: re-read only from the start of the hour that was still partial at
@@ -2071,8 +2162,9 @@ def _alert_hourly(name: str, now: datetime) -> Optional[dict]:
     (those hours are complete and cannot change). Rows older than the window are
     dropped. If the read fails the cache is left untouched.
     """
-    window_start = now - timedelta(days=ALERT_ANALYSIS_DAYS)
-    entry = _ALERT_HOURLY_CACHE.get(name)
+    window_start = now - timedelta(days=days)
+    key = name if days == ALERT_ANALYSIS_DAYS else f"{name}|{days}"
+    entry = _ALERT_HOURLY_CACHE.get(key)
     rows: dict[str, dict] = {}
     if entry and window_start < entry["fetched_at"] <= now:
         keep_from = _floor_hour(entry["fetched_at"])
@@ -2089,7 +2181,7 @@ def _alert_hourly(name: str, now: datetime) -> Optional[dict]:
 
     cutoff = _floor_hour(window_start).strftime(_HOUR_FMT)
     rows = {h: r for h, r in rows.items() if h >= cutoff}
-    _ALERT_HOURLY_CACHE[name] = {"rows": rows, "fetched_at": now}
+    _ALERT_HOURLY_CACHE[key] = {"rows": rows, "fetched_at": now}
     if not rows:
         return None
     ordered = [rows[h] for h in sorted(rows)]

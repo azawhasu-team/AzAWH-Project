@@ -175,6 +175,11 @@ class APIClient {
     return this.fetch<ImpactResponse>('/impact');
   }
 
+  /** Daily energy per litre (kWh/L) for every recently-reporting station. */
+  async getEfficiencyDaily(days = 30): Promise<EfficiencyDailyResponse> {
+    return this.fetch<EfficiencyDailyResponse>(`/efficiency/daily?days=${days}`);
+  }
+
   /** Daily data-quality scores (0-100) plus the station's calibration events. */
   async getStationQuality(stationName: string, days = 7): Promise<StationQualityResponse> {
     return this.fetch<StationQualityResponse>(
@@ -465,6 +470,36 @@ export interface HourlyDataRow {
   intake_available_water_g_hourly?: number | null;
   water_captured_g_hourly?: number | null;
   harvesting_efficiency_pct_hourly?: number | null;
+}
+
+export interface EfficiencyDay {
+  date: string; // Phoenix-local day, YYYY-MM-DD
+  energy_kWh: number;
+  water_L: number;
+  /** null when the day had too little water for a meaningful ratio */
+  kwh_per_L: number | null;
+  hours: number;
+  /** false for today, which is still in progress */
+  complete: boolean;
+}
+
+export interface StationEfficiency {
+  station_name: string;
+  display_name: string;
+  days: EfficiencyDay[];
+  latest: number | null;
+  latest_date: string | null;
+  baseline: number | null;
+  /** change of the latest complete day vs the previous days' average; negative = more efficient */
+  change_pct: number | null;
+}
+
+export interface EfficiencyDailyResponse {
+  days: number;
+  /** true while some stations are still being read for the first time */
+  warming: boolean;
+  updated_at: string;
+  stations: StationEfficiency[];
 }
 
 export interface HourlyAggregationResponse {

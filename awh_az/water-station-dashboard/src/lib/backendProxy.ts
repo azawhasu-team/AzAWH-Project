@@ -5,7 +5,7 @@
 // it can be unit tested without a server.
 
 /** First path segments the browser may reach. Everything else (admin, cache, docs) is refused. */
-const ALLOWED_ROOTS = new Set(['stations', 'impact', 'export', 'stations-registry']);
+const ALLOWED_ROOTS = new Set(['stations', 'impact', 'export', 'stations-registry', 'efficiency']);
 /** The only POST route; every other allowed route is read-only. */
 const POST_ROOTS = new Set(['export']);
 const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept'];

@@ -224,3 +224,44 @@ def test_energy_only_station_keeps_its_energy_when_power_is_always_null(client, 
     use_firestore({"x": {"readings": rs, "meta": {}}})
     rows = client.get("/stations/x/hourly").json()["data"]
     assert rows[1]["energy_consumed_kWh"] is not None and rows[1]["energy_consumed_kWh"] > 0
+
+
+# ---------------------------------------------------------------------------
+# a frozen energy meter that catches up after a data gap must not land as one lump
+# ---------------------------------------------------------------------------
+def _counting_readings(minutes, start_min, kwh_start, kw=0.8, frozen=False):
+    """One reading a minute from `start_min`; energy counts at `kw` unless frozen."""
+    t0 = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
+    out = []
+    for i in range(minutes):
+        e = kwh_start if frozen else kwh_start + i * kw / 60.0
+        out.append({
+            "station_name": "x", "timestamp": (t0 + timedelta(minutes=start_min + i)).isoformat(), "unit": "m/s",
+            "temperature": 30.0, "humidity": 40.0, "velocity": 2.0,
+            "outtake_temperature": 25.0, "outtake_humidity": 70.0, "outtake_velocity": 1.5, "outtake_unit": "m/s",
+            "weight": 100.0 + (start_min + i) * 1.0, "power": None, "voltage": None, "current": None,
+            "energy": e, "pump_status": 1,
+        })
+    return out
+
+
+def _hourly_energy(client, use_firestore, readings):
+    main.cache.delete_pattern("hourly:*")
+    use_firestore({"x": {"readings": readings, "meta": {}}})
+    return [r["energy_consumed_kWh"] for r in client.get("/stations/x/hourly").json()["data"]]
+
+
+def test_frozen_meter_catching_up_after_a_gap_is_left_out(client, use_firestore):
+    rs = (
+        _counting_readings(60, 0, 100.0)                           # hour 0: counting normally
+        + _counting_readings(120, 60, 100.8, frozen=True)           # hours 1-2: frozen at 100.8
+        + _counting_readings(60, 60 + 120 + 1440, 127.2)           # 24 h gap, then it has caught up by +26.4 kWh (~1.1 kW average, so the 3 kW jump rule alone lets it through)
+    )
+    energy = _hourly_energy(client, use_firestore, rs)
+    assert all(e is None or e <= 3.0 for e in energy), energy      # no 26 kWh hour
+
+
+def test_meter_that_was_counting_before_a_gap_still_counts_its_reconnection(client, use_firestore):
+    rs = _counting_readings(60, 0, 100.0) + _counting_readings(60, 60 + 180, 100.8 + 0.8 * 3)   # 3 h gap, consumption continued
+    energy = _hourly_energy(client, use_firestore, rs)
+    assert any(e is not None and e > 1.5 for e in energy), energy   # the 2.4 kWh used during the gap is still counted
