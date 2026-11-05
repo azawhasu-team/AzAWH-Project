@@ -110,7 +110,7 @@ def silent_fleet(monkeypatch):
     async def stations():
         return _silent_station()
     monkeypatch.setattr(main, "get_stations", stations)
-    monkeypatch.setattr(main, "_latest_complete_day", lambda name: None)
+    monkeypatch.setattr(main, "_latest_complete_day", lambda name, *a, **k: None)
 
 
 def test_evaluate_requires_admin_key(client, store, silent_fleet):

@@ -2037,17 +2037,33 @@ async def delete_calibration(event_id: str, _: None = Depends(require_admin_key)
 # ---------------------------------------------------------------------------
 # Alert notifications (Slack / email) with acknowledge + snooze
 # ---------------------------------------------------------------------------
-def _latest_complete_day(name: str) -> Optional[dict]:
+# Alert runs look at this many days of hourly data per station, fetched ONCE and
+# shared by the quality and power checks. (Each hourly fetch reads every raw
+# reading in the window from Firestore, so a wide window at a 5 s upload rate is
+# what made the scheduled run time out.)
+ALERT_ANALYSIS_DAYS = 3
+
+
+def _alert_hourly(name: str, now: datetime) -> Optional[dict]:
+    return _compute_hourly_aggregation_sync(name, now - timedelta(days=ALERT_ANALYSIS_DAYS), now)
+
+
+def _latest_complete_day(name: str, hourly: Optional[dict] = None, now: Optional[datetime] = None) -> Optional[dict]:
     """Yesterday's (or the latest finished day's) quality entry, if any."""
-    today_local = datetime.now(timezone.utc).astimezone(quality.STATION_TZ).date().isoformat()
-    done = [d for d in _quality_sync(name, 3) if d["date"] < today_local]
+    now = now or datetime.now(timezone.utc)
+    today_local = now.astimezone(quality.STATION_TZ).date().isoformat()
+    if hourly is None:
+        days = _quality_sync(name, ALERT_ANALYSIS_DAYS)
+    else:
+        days = quality.daily_quality(hourly["data"], now) if hourly else []
+    done = [d for d in days if d["date"] < today_local]
     return done[-1] if done else None
 
 
-def _power_status_for(name: str, now: datetime) -> Optional[dict]:
+def _power_status_for(name: str, now: datetime, hourly: Optional[dict] = None) -> Optional[dict]:
     """Whether this station's meter normally reports power and how long it has been missing."""
-    start = now - timedelta(days=settings.alert_lookback_days)
-    hourly = _compute_hourly_aggregation_sync(name, start, now)
+    if hourly is None:
+        hourly = _alert_hourly(name, now)
     return alerting.power_status(hourly["data"]) if hourly else None
 
 
@@ -2070,8 +2086,9 @@ def _evaluate_alerts_sync(stations: list[dict], dry_run: bool) -> dict:
     explicit = _alert_overrides()
     live = alerting.expected_live(stations, now, settings.alert_lookback_days, explicit)
     with ThreadPoolExecutor(max_workers=min(len(live), 8) or 1) as ex:
-        qs = dict(zip(live, ex.map(lambda n: _safe(_latest_complete_day, n), live)))
-        ps = dict(zip(live, ex.map(lambda n: _safe(_power_status_for, n, now), live)))
+        hourly = dict(zip(live, ex.map(lambda n: _safe(_alert_hourly, n, now), live)))
+        qs = {n: _safe(_latest_complete_day, n, hourly[n], now) if hourly[n] else None for n in live}
+        ps = {n: _safe(_power_status_for, n, now, hourly[n]) if hourly[n] else None for n in live}
     active = alerting.evaluate(
         stations, {k: v for k, v in qs.items() if v}, now,
         stale_minutes=settings.alert_stale_minutes, lookback_days=settings.alert_lookback_days,
