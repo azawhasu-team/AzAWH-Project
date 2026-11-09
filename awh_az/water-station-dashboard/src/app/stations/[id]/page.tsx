@@ -966,8 +966,6 @@ export default function StationDetails() {
 
       {stationName && <DataQualityPanel stationName={stationName} />}
 
-      {stationName && <WeatherPanel stationName={stationName} />}
-
       {wxBands.length > 0 && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 1 }}>
           <FormControlLabel
@@ -1177,6 +1175,9 @@ export default function StationDetails() {
         </motion.div>
       )}
       </Box>
+
+      {/* Weather at the station: context for the charts above, so it sits at the end of the page */}
+      {stationName && <WeatherPanel stationName={stationName} />}
 
       {/* Date Period Dialog */}
       <AnimatePresence>
