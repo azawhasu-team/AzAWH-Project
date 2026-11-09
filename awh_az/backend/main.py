@@ -1451,6 +1451,18 @@ def _compute_hourly_aggregation_sync(
             round(flow_L_by_hour[hour_key], 6) if hour_key in flow_seen_by_hour else None
         )
 
+        # Energy per litre by the flow meter's volume: the same idea as
+        # energy_per_liter_kWh_L above, but dividing by the flow-integrated water.
+        # None when there is no flow reading, no water went through, or the hour's
+        # energy was left out, so it is a gap rather than a false 0.
+        flow_L = row["water_produced_flow_L"]
+        energy_for_flow = row.get("energy_consumed_kWh")
+        row["energy_per_liter_flow_kWh_L"] = (
+            round(energy_for_flow / flow_L, 4)
+            if isinstance(flow_L, (int, float)) and flow_L > 0 and energy_for_flow
+            else None
+        )
+
         # Hourly harvesting efficiency (%):
         # (sum of positive weight deltas) / (sum of intake-available water in same intervals) * 100
         # Both sides bridged across hour boundaries above — captured_g the
@@ -1501,6 +1513,7 @@ async def get_hourly_aggregation(
     - water_produced_flow_L (flow meter rate integrated over the hour)
     - energy_consumed_kWh (delta energy per hour)
     - energy_per_liter (kWh/L)
+    - energy_per_liter_flow_kWh_L (energy / flow-meter volume, same idea using the flow water)
     - harvesting_efficiency_pct_hourly (ratio of captured water vs intake-available water over the hour)
     """
     if not db:

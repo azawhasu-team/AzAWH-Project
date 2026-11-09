@@ -265,3 +265,25 @@ def test_meter_that_was_counting_before_a_gap_still_counts_its_reconnection(clie
     rs = _counting_readings(60, 0, 100.0) + _counting_readings(60, 60 + 180, 100.8 + 0.8 * 3)   # 3 h gap, consumption continued
     energy = _hourly_energy(client, use_firestore, rs)
     assert any(e is not None and e > 1.5 for e in energy), energy   # the 2.4 kWh used during the gap is still counted
+
+
+def test_hourly_energy_per_litre_by_flow_is_energy_over_flow_volume(client, use_firestore):
+    rs = _counting_readings(120, 0, 100.0)               # 0.8 kWh per hour
+    for r in rs:
+        r["flow_lmin"] = 0.5                              # 0.5 L/min = 30 L per hour
+    main.cache.delete_pattern("hourly:*")
+    use_firestore({"x": {"readings": rs, "meta": {}}})
+    rows = client.get("/stations/x/hourly").json()["data"]
+    full = [r for r in rows if r["energy_consumed_kWh"] and r["water_produced_flow_L"]]
+    assert full, rows
+    r = full[0]
+    assert r["energy_per_liter_flow_kWh_L"] == pytest.approx(r["energy_consumed_kWh"] / r["water_produced_flow_L"], abs=1e-4)
+    assert 0.02 < r["energy_per_liter_flow_kWh_L"] < 0.04   # ~0.8 kWh / ~30 L
+
+
+def test_energy_per_litre_by_flow_is_a_gap_without_a_flow_meter(client, use_firestore):
+    rs = _counting_readings(120, 0, 100.0)               # no flow_lmin at all
+    main.cache.delete_pattern("hourly:*")
+    use_firestore({"x": {"readings": rs, "meta": {}}})
+    rows = client.get("/stations/x/hourly").json()["data"]
+    assert all(r["energy_per_liter_flow_kWh_L"] is None for r in rows)

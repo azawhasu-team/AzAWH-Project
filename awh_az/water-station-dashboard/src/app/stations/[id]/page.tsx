@@ -428,6 +428,13 @@ export default function StationDetails() {
   })();
   const periodTotalEnergyKWh = hourlyRows.reduce((sum, r) => sum + (r.energy_consumed_kWh ?? 0), 0);
   const periodEnergyPerLiter = periodTotalWaterL > 0 ? periodTotalEnergyKWh / periodTotalWaterL : null;
+  // Flow-based counterpart. The flow meter may only have data for part of the period
+  // (it started reporting later), so energy is summed only over the hours that have
+  // flow data; dividing the whole period's energy by a partial flow total would overstate it.
+  const flowHours = hourlyRows.filter(r => r.water_produced_flow_L != null);
+  const periodFlowEnergyKWh = flowHours.reduce((sum, r) => sum + (r.energy_consumed_kWh ?? 0), 0);
+  const periodFlowForEnergyL = flowHours.reduce((sum, r) => sum + (r.energy_consumed_kWh != null ? (r.water_produced_flow_L ?? 0) : 0), 0);
+  const periodEnergyPerLiterFlow = periodFlowForEnergyL > 0 ? periodFlowEnergyKWh / periodFlowForEnergyL : null;
 
   // Most recent hour's water production rate — for Live Status, distinct from the
   // period total above. Scans backward for the latest hour with a non-null
@@ -457,6 +464,8 @@ export default function StationDetails() {
   // two hourly charts — see the matching note on hourlyEfficiencyData above.
   const hourlyEnergyPerLiterData: ChartDataPoint[] = hourlyRows
     .map(r => ({ date: r.hour, value: typeof r.energy_per_liter_kWh_L === 'number' ? convertSpecificEnergy(r.energy_per_liter_kWh_L, volumeUnit) : null }));
+  const hourlyFlowEnergyPerLiterData: ChartDataPoint[] = hourlyRows
+    .map(r => ({ date: r.hour, value: typeof r.energy_per_liter_flow_kWh_L === 'number' ? convertSpecificEnergy(r.energy_per_liter_flow_kWh_L, volumeUnit) : null }));
   const hourlyWaterProductionData: ChartDataPoint[] = hourlyRows
     .map(r => ({ date: r.hour, value: typeof r.water_produced_L === 'number' ? convertLiters(r.water_produced_L, volumeUnit) : null }));
   const hourlyFlowWaterProductionData: ChartDataPoint[] = hourlyRows
@@ -728,7 +737,8 @@ export default function StationDetails() {
                 },
                 { key: 'humidity', label: 'Intake Humidity', value: liveReading.humidity, unit: '%', decimals: 1, requires: ['humidity'], subLabel: null as string | null },
                 { key: 'outtake_humidity', label: 'Outtake Humidity', value: liveReading.outtake_humidity, unit: '%', decimals: 1, requires: ['outtake_humidity'], subLabel: null as string | null },
-                { key: 'energy_per_liter', label: 'Energy Consumption', value: periodEnergyPerLiter != null ? convertSpecificEnergy(periodEnergyPerLiter, volumeUnit) : null, unit: `kWh/${UNIT_LABEL[volumeUnit]}`, decimals: volumeUnit === 'acre-ft' ? 0 : 3, requires: ['energy', 'weight'], subLabel: null as string | null },
+                { key: 'energy_per_liter', label: 'Energy Consumption (Mass)', value: periodEnergyPerLiter != null ? convertSpecificEnergy(periodEnergyPerLiter, volumeUnit) : null, unit: `kWh/${UNIT_LABEL[volumeUnit]}`, decimals: volumeUnit === 'acre-ft' ? 0 : 3, requires: ['energy', 'weight'], subLabel: null as string | null },
+                { key: 'energy_per_liter_flow', label: 'Energy Consumption (Flow)', value: periodEnergyPerLiterFlow != null ? convertSpecificEnergy(periodEnergyPerLiterFlow, volumeUnit) : null, unit: `kWh/${UNIT_LABEL[volumeUnit]}`, decimals: volumeUnit === 'acre-ft' ? 0 : 3, requires: ['energy', 'flow_lmin'], subLabel: null as string | null },
                 { key: 'power', label: 'Power', value: liveReading.power, unit: 'W', decimals: 1, requires: ['power'], subLabel: null as string | null },
               ]
                 .filter(f => f.requires.every(r => availableFields.includes(r)) && typeof f.value === 'number')
@@ -1146,6 +1156,27 @@ export default function StationDetails() {
             startDate={format(startDate, 'yyyy-MM-dd')}
             endDate={format(endDate, 'yyyy-MM-dd')}
             paramNames={['Specific Energy Consumption (Hourly)']}
+            paramUnits={[`kWh/${UNIT_LABEL[volumeUnit]}`]}
+            chartType="bar"
+            zoomRange={chartZoom}
+            onZoomChange={setChartZoom}
+          />
+        </motion.div>
+      )}
+
+      {!readingsLoading && startDate && endDate && !hourlyEfficiencyLoading && availableFields.includes('flow_lmin') && hourlyFlowEnergyPerLiterData.some(d => d.value != null) && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.42 }}
+        >
+          <FeaturePlot
+            weatherBands={chartWeatherBands}
+            data={hourlyFlowEnergyPerLiterData}
+            feature={'Efficiency - Specific Energy Consumption, Flow (Hourly)' as FeatureType}
+            startDate={format(startDate, 'yyyy-MM-dd')}
+            endDate={format(endDate, 'yyyy-MM-dd')}
+            paramNames={['Specific Energy Consumption, Flow (Hourly)']}
             paramUnits={[`kWh/${UNIT_LABEL[volumeUnit]}`]}
             chartType="bar"
             zoomRange={chartZoom}

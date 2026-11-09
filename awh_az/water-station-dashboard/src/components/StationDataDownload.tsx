@@ -347,6 +347,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                 `Water Produced (g, ${UNIT_LABEL[volumeUnit]})`,
                 'Energy Consumed (kWh)',
                 `Energy/${UNIT_LABEL[volumeUnit]} (kWh/${UNIT_LABEL[volumeUnit]})`,
+                `Energy/${UNIT_LABEL[volumeUnit]}, flow-based`,
                 'Weather (temp, humidity, wind, rain, dust event)',
               ].map(label => (
                 <Chip key={label} label={label} size="small"
@@ -417,6 +418,8 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                   'Energy Consumed (kWh)': row.energy_consumed_kWh,
                   [`Energy per ${UNIT_LABEL[volumeUnit]} (kWh/${UNIT_LABEL[volumeUnit]})`]:
                     row.energy_per_liter_kWh_L != null ? convertSpecificEnergy(row.energy_per_liter_kWh_L, volumeUnit) : row.energy_per_liter_kWh_L,
+                  [`Energy per ${UNIT_LABEL[volumeUnit]}, Flow (kWh/${UNIT_LABEL[volumeUnit]})`]:
+                    row.energy_per_liter_flow_kWh_L != null ? convertSpecificEnergy(row.energy_per_liter_flow_kWh_L, volumeUnit) : row.energy_per_liter_flow_kWh_L,
                   'Ambient Temperature (°C)': wxByHour.get(row.hour)?.temperature_c ?? null,
                   'Ambient Humidity (%)': wxByHour.get(row.hour)?.humidity_pct ?? null,
                   'Wind Speed (km/h)': wxByHour.get(row.hour)?.wind_kmh ?? null,
