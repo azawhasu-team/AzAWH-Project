@@ -144,6 +144,7 @@ az_awh_monitoring_system/
     ├── INGESTION_GUIDE.md
     ├── UI_GUIDE.md
     ├── HARVESTING_EFFICIENCY_FORMULA.md
+    ├── calculations/                  ← How EVERY number is calculated (start at README.md)
     ├── DEPLOYMENT_GUIDE.md
     ├── STATUS_REPORT.md
     └── QUICK_REFERENCE.md
@@ -516,7 +517,7 @@ python test_flow.py
 | AWH | Atmospheric Water Harvesting — extracting liquid water from humid air |
 | SSEBE | School of Sustainable Engineering and the Built Environment, ASU |
 | AquaPars | Name of the station hardware unit and runtime orchestrator |
-| Harvesting Efficiency | Fraction of available atmospheric moisture captured as liquid water (computed metric, see `guides/HARVESTING_EFFICIENCY_FORMULA.md`) |
+| Harvesting Efficiency | Fraction of available atmospheric moisture captured as liquid water (computed metric, see `guides/HARVESTING_EFFICIENCY_FORMULA.md`; all calculations: `guides/calculations/README.md`) |
 | cp210x | The USB-to-serial converter chip inside the anemometer and balance USB cables |
 | ttyUSB | Linux device name for USB serial ports |
 | Hypertable | TimescaleDB's time-partitioned table structure for efficient time-series queries |

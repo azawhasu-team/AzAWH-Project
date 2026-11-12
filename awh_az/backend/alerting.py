@@ -129,8 +129,13 @@ def power_status(hourly_rows: list[dict]) -> dict:
             break
         stuck += 1
     # Flow meter: trailing hours where it reported (a number, even 0) but registered
-    # (almost) nothing. Only a fault if the balance shows water was actually there to
-    # pump, so the run's balance-measured water is returned for evaluate() to check.
+    # (almost) nothing WHILE THE STATION WAS PRODUCING. "Producing" = the hour's
+    # energy cleared the 0.2 kWh/h floor (energy_consumed_kWh is set). Fans alone
+    # (idle, ~0.19 kWh/h) make no water, so zero flow then is expected; and the
+    # balance wobbles ~0.5-1 L/h from jitter on an idle unit, which must not be
+    # mistaken for production (11 Nov 2026: false alarm). A non-producing hour
+    # ends the run. The run's balance-measured water is returned for evaluate()
+    # as a second check that water was really there to pump.
     def flow_l(r):
         v = r.get("water_produced_flow_L")
         return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
@@ -140,7 +145,7 @@ def power_status(hourly_rows: list[dict]) -> dict:
     no_flow_water = 0.0
     for r in reversed(hourly_rows):
         f = flow_l(r)
-        if f is None or f >= NO_FLOW_MAX_L:
+        if f is None or f >= NO_FLOW_MAX_L or not used_energy(r):
             break
         no_flow += 1
         w = r.get("water_produced_L")

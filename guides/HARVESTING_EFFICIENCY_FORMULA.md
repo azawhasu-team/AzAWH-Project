@@ -1,5 +1,7 @@
 # Harvesting Efficiency Formula
 
+> **Note (2026-11-12):** the backend returns `null` (excluded), **not 0**, when no water was captured or no valid intake data exists, and per-reading/hourly efficiency is capped at 100 %. Where this page says "0, otherwise" read "excluded". The full, current set of calculations is in [calculations/03-backend-hourly.md](calculations/03-backend-hourly.md).
+
 ## Purpose
 Harvesting efficiency answers one question:
 

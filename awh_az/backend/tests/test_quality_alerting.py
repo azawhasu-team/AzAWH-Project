@@ -320,6 +320,23 @@ def test_zero_flow_with_no_water_collected_is_not_an_alert():
     assert alerting.evaluate(_flow_stations(now), {}, now, power={"a": st}) == []
 
 
+def test_zero_flow_while_machine_idles_is_not_flow_dead():
+    # 10-12 Nov 2026: compressor off, fans on (~0.19 kWh/h), balance jitter ~1 L/h, flow 0 = expected
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    idle = [{"water_produced_flow_L": 0.0, "water_produced_L": 1.0, "energy_consumed_kWh": None,
+             "energy_total_kWh": 0.19, "velocity_mean": 2.1, "reading_count": 60}] * 30
+    st = alerting.power_status(_fl((3.0, 1.0)) + idle)
+    assert st["no_flow_hours"] == 0
+    rules = [a.rule for a in alerting.evaluate(_flow_stations(now), {}, now, power={"a": st})]
+    assert "flow_dead" not in rules and rules == ["station_off"]   # idling is reported as off/idle, not a dead meter
+
+
+def test_machine_stopping_ends_the_no_flow_run():
+    # only the hours since the machine last ran count; 3 running + 10 idle = no alert
+    idle = [{"water_produced_flow_L": 0.0, "water_produced_L": 1.0, "energy_consumed_kWh": None, "reading_count": 60}] * 10
+    assert alerting.power_status(_fl(*[(0.0, 1.0)] * 3) + idle)["no_flow_hours"] == 0
+
+
 def test_short_zero_flow_stretch_between_pump_runs_is_not_an_alert():
     now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
     st = alerting.power_status(_fl((3.0, 1.0), *[(0.0, 1.5)] * 3))   # only 3 h
