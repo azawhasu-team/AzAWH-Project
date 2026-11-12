@@ -268,6 +268,14 @@ def test_no_energy_while_fans_run_is_energy_stuck_not_station_off():
     assert alerting.evaluate(stations, {}, now, power={"a": long})[0].severity == "critical"
 
 
+def test_idle_draw_below_the_floor_is_not_energy_stuck():
+    rows = [{"energy_consumed_kWh": None, "energy_total_kWh": 0.19, "velocity_mean": 2.2, "power_mean": None} for _ in range(8)]
+    rows.insert(0, {"energy_consumed_kWh": 0.8, "energy_total_kWh": 0.8, "velocity_mean": 2.2, "power_mean": None})
+    assert alerting.power_status(rows)["stuck_hours"] == 0          # meter is counting, just below the off floor
+    frozen = [{"energy_consumed_kWh": None, "energy_total_kWh": 0.0, "velocity_mean": 2.2, "power_mean": None} for _ in range(4)]
+    assert alerting.power_status([rows[0]] + frozen)["stuck_hours"] == 4   # a truly frozen meter still counts
+
+
 def test_no_energy_with_fans_off_is_still_station_off():
     now = datetime(2026, 10, 31, 12, tzinfo=timezone.utc)
     stations = [{"station_name": "a", "metadata": {"last_reading": now.isoformat()}}]
@@ -283,6 +291,59 @@ def test_energy_stuck_clears_when_energy_counts_again():
     ok = alerting.power_status(_en_v((0.8, 1.9), (None, 1.9), (None, 1.9), (0.8, 1.9)))
     assert ok["stuck_hours"] == 0
     assert alerting.evaluate(stations, {}, now, power={"a": ok}) == []
+
+
+# ---------------------------------------------------------------------------
+# flow_dead: flow meter reads zero although the balance shows water was collected
+# ---------------------------------------------------------------------------
+def _fl(*pairs):
+    return [{"water_produced_flow_L": f, "water_produced_L": m, "energy_consumed_kWh": 0.8, "reading_count": 60} for f, m in pairs]
+
+
+def _flow_stations(now):
+    return [{"station_name": "a", "metadata": {"last_reading": now.isoformat()}}]
+
+
+def test_zero_flow_while_balance_collects_water_is_flow_dead():
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    st = alerting.power_status(_fl((3.0, 1.0), *[(0.0, 1.0)] * 6))
+    assert st["no_flow_hours"] == 6 and st["no_flow_water_l"] == 6.0
+    out = alerting.evaluate(_flow_stations(now), {}, now, power={"a": st})
+    assert [a.rule for a in out] == ["flow_dead"] and out[0].severity == "warning"
+    long = alerting.power_status(_fl((3.0, 1.0), *[(0.0, 1.0)] * 24))
+    assert alerting.evaluate(_flow_stations(now), {}, now, power={"a": long})[0].severity == "critical"
+
+
+def test_zero_flow_with_no_water_collected_is_not_an_alert():
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    st = alerting.power_status(_fl((3.0, 1.0), *[(0.0, 0.1)] * 8))   # nothing to pump (night / off)
+    assert alerting.evaluate(_flow_stations(now), {}, now, power={"a": st}) == []
+
+
+def test_short_zero_flow_stretch_between_pump_runs_is_not_an_alert():
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    st = alerting.power_status(_fl((3.0, 1.0), *[(0.0, 1.5)] * 3))   # only 3 h
+    assert alerting.evaluate(_flow_stations(now), {}, now, power={"a": st}) == []
+
+
+def test_station_without_flow_meter_never_gets_flow_dead():
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    st = alerting.power_status(_fl(*[(None, 1.5)] * 10))
+    assert st["reports_flow"] is False
+    assert alerting.evaluate(_flow_stations(now), {}, now, power={"a": st}) == []
+
+
+def test_flow_dead_clears_when_flow_returns():
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    st = alerting.power_status(_fl(*[(0.0, 1.0)] * 8, (2.5, 1.0)))
+    assert alerting.evaluate(_flow_stations(now), {}, now, power={"a": st}) == []
+
+
+def test_silent_station_gets_stale_not_flow_dead():
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    stations = [{"station_name": "a", "metadata": {"last_reading": (now - timedelta(hours=5)).isoformat()}}]
+    st = alerting.power_status(_fl(*[(0.0, 1.0)] * 8))
+    assert [a.rule for a in alerting.evaluate(stations, {}, now, power={"a": st})] == ["stale"]
 
 
 # ---------------------------------------------------------------------------

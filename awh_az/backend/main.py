@@ -2252,6 +2252,7 @@ def _evaluate_alerts_sync(stations: list[dict], dry_run: bool) -> dict:
         stale_minutes=settings.alert_stale_minutes, lookback_days=settings.alert_lookback_days,
         explicit=explicit, quality_threshold=settings.alert_quality_threshold,
         power={k: v for k, v in ps.items() if v}, power_missing_hours=settings.alert_power_missing_hours,
+        no_flow_hours=settings.alert_no_flow_hours,
     )
     previous = alerting.load_state(db)
     notes, new_state = alerting.plan(active, previous, now, settings.alert_reminder_hours)

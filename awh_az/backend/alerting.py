@@ -32,6 +32,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 STATE_COLLECTION = "alert_state"
+NO_FLOW_MAX_L = 0.05  # an hour with less flow-meter volume than this counts as "no flow"
 RUNNING_VELOCITY_MPS = 0.3  # intake airflow at/above this (m/s) means the station is running
 SNOOZE_CHOICES_HOURS = (1, 4, 24)
 LINK_TTL_HOURS = 72
@@ -115,14 +116,41 @@ def power_status(hourly_rows: list[dict]) -> dict:
         v = r.get("velocity_mean")
         return isinstance(v, (int, float)) and not isinstance(v, bool) and v >= RUNNING_VELOCITY_MPS
 
+    # "Counting" here means the meter registered anything at all (energy_total_kWh,
+    # idle draw included), not the floored figure: a station idling at ~190 W is on
+    # and its meter is fine. Older rows without the field fall back to the floored one.
+    def counting(r):
+        v = r.get("energy_total_kWh", r.get("energy_consumed_kWh"))
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
+
     stuck = 0
     for r in reversed(hourly_rows):
-        if used_energy(r) or not running(r):
+        if counting(r) or not running(r):
             break
         stuck += 1
+    # Flow meter: trailing hours where it reported (a number, even 0) but registered
+    # (almost) nothing. Only a fault if the balance shows water was actually there to
+    # pump, so the run's balance-measured water is returned for evaluate() to check.
+    def flow_l(r):
+        v = r.get("water_produced_flow_L")
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    reports_flow = any(flow_l(r) is not None for r in hourly_rows)
+    no_flow = 0
+    no_flow_water = 0.0
+    for r in reversed(hourly_rows):
+        f = flow_l(r)
+        if f is None or f >= NO_FLOW_MAX_L:
+            break
+        no_flow += 1
+        w = r.get("water_produced_L")
+        if isinstance(w, (int, float)) and not isinstance(w, bool):
+            no_flow_water += w
     return {
         "reports_power": reports, "missing_hours": missing, "reports_energy": reports_energy,
         "off_hours": off, "stuck_hours": stuck if reports_energy else 0,
+        "reports_flow": reports_flow, "no_flow_hours": no_flow if reports_flow else 0,
+        "no_flow_water_l": round(no_flow_water, 2),
     }
 
 
@@ -138,6 +166,8 @@ def evaluate(
     power: Optional[dict[str, dict]] = None,
     power_missing_hours: int = 2,
     off_hours: int = 2,
+    no_flow_hours: int = 6,
+    no_flow_min_water_l: float = 2.0,
 ) -> list[Alert]:
     """Active alerts right now. `quality_latest` maps station -> its latest
     COMPLETE day from quality.daily_quality (yesterday), if any."""
@@ -165,6 +195,20 @@ def evaluate(
                     )
                 )
         ps = (power or {}).get(name)
+        stale_now = any(a.id == f"{name}|stale" for a in alerts)
+        nf_hrs = (ps or {}).get("no_flow_hours", 0)
+        if ps and not stale_now and nf_hrs >= no_flow_hours and ps.get("no_flow_water_l", 0) >= no_flow_min_water_l:
+            alerts.append(
+                Alert(
+                    f"{name}|flow_dead", name, display, "flow_dead",
+                    "critical" if nf_hrs >= 24 else "warning",
+                    f"{display}: flow meter reading zero",
+                    f"The flow meter has registered no water for about {nf_hrs} h, but the balance shows "
+                    f"about {ps['no_flow_water_l']:.1f} L was collected in that time, so water is being "
+                    "produced and should be flowing. Check the flow sensor wiring/signal and that the pump "
+                    "is actually moving water.",
+                )
+            )
         if ps and ps["reports_power"] and ps["missing_hours"] >= power_missing_hours:
             hrs = ps["missing_hours"]
             alerts.append(
@@ -200,7 +244,7 @@ def evaluate(
                 Alert(
                     f"{name}|station_off", name, display, "station_off", "warning",
                     f"{display}: station turned off",
-                    f"The station is still reporting but has used no energy for about {ps['off_hours']} h. "
+                    f"The station is still reporting but has drawn under 0.2 kWh per hour (off or idle) for about {ps['off_hours']} h. "
                     "You will get a RESOLVED email when it is running again.",
                 )
             )

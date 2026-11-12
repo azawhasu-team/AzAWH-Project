@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     alert_lookback_days: float = 7  # a station that reported this recently is expected to be live
     alert_quality_threshold: int = 60
     alert_power_missing_hours: int = 2  # alert once power has been missing this many hourly buckets in a row
+    alert_no_flow_hours: int = 6  # alert once the flow meter reads zero this many hourly buckets in a row while the balance shows water
     alert_expected_live: str = ""  # optional JSON {"station": max_silent_minutes}
 
     # Ambient weather (weather.py). Stations have no stored coordinates, so all
