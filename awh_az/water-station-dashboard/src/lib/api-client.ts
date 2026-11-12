@@ -466,6 +466,8 @@ export interface HourlyDataRow {
   water_produced_L: number | null;
   water_produced_flow_L: number | null;
   energy_consumed_kWh: number | null;
+  /** All energy the meter registered in the hour, idle draw included (energy_consumed_kWh is None below the station-off floor). */
+  energy_total_kWh?: number | null;
   energy_per_liter_kWh_L: number | null;
   /** energy / flow-meter volume (the mass-based energy_per_liter_kWh_L, but dividing by the flow water) */
   energy_per_liter_flow_kWh_L: number | null;

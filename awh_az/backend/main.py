@@ -1430,8 +1430,13 @@ def _compute_hourly_aggregation_sync(
             threshold_kwh = ENERGY_WH_HEURISTIC_THRESHOLD_KWH * span_hours
             energy_kwh = energy_delta / 1000.0 if energy_delta > threshold_kwh else energy_delta
             row["energy_consumed_kWh"] = round(energy_kwh, 4) if energy_kwh >= ENERGY_NOISE_FLOOR_KWH else None
+            # Everything the meter registered this hour (jumps still removed), idle
+            # draw included. The floored field above stays the basis for energy per
+            # litre and the ON/OFF state; this one is for energy totals.
+            row["energy_total_kWh"] = round(energy_kwh, 4)
         else:
             row["energy_consumed_kWh"] = None
+            row["energy_total_kWh"] = None
 
         # Energy per liter (kWh/L)
         water_g = row.get("water_produced_g")

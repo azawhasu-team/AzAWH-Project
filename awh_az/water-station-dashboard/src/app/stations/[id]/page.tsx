@@ -427,6 +427,8 @@ export default function StationDetails() {
     return null;
   })();
   const periodTotalEnergyKWh = hourlyRows.reduce((sum, r) => sum + (r.energy_consumed_kWh ?? 0), 0);
+  // Includes idle draw (hours below the station-off floor); older backends lack the field, so fall back.
+  const periodAllEnergyKWh = hourlyRows.reduce((sum, r) => sum + (r.energy_total_kWh ?? r.energy_consumed_kWh ?? 0), 0);
   const periodEnergyPerLiter = periodTotalWaterL > 0 ? periodTotalEnergyKWh / periodTotalWaterL : null;
   // Flow-based counterpart. The flow meter may only have data for part of the period
   // (it started reporting later), so energy is summed only over the hours that have
@@ -737,6 +739,7 @@ export default function StationDetails() {
                 },
                 { key: 'humidity', label: 'Intake Humidity', value: liveReading.humidity, unit: '%', decimals: 1, requires: ['humidity'], subLabel: null as string | null },
                 { key: 'outtake_humidity', label: 'Outtake Humidity', value: liveReading.outtake_humidity, unit: '%', decimals: 1, requires: ['outtake_humidity'], subLabel: null as string | null },
+                { key: 'energy_total', label: 'Total Energy (incl. idle)', value: hourlyRows.some(r => r.energy_total_kWh != null || r.energy_consumed_kWh != null) ? periodAllEnergyKWh : null, unit: 'kWh', decimals: 1, requires: ['energy'], subLabel: null as string | null },
                 { key: 'energy_per_liter', label: 'Energy Consumption (Mass)', value: periodEnergyPerLiter != null ? convertSpecificEnergy(periodEnergyPerLiter, volumeUnit) : null, unit: `kWh/${UNIT_LABEL[volumeUnit]}`, decimals: volumeUnit === 'acre-ft' ? 0 : 3, requires: ['energy', 'weight'], subLabel: null as string | null },
                 { key: 'energy_per_liter_flow', label: 'Energy Consumption (Flow)', value: periodEnergyPerLiterFlow != null ? convertSpecificEnergy(periodEnergyPerLiterFlow, volumeUnit) : null, unit: `kWh/${UNIT_LABEL[volumeUnit]}`, decimals: volumeUnit === 'acre-ft' ? 0 : 3, requires: ['energy', 'flow_lmin'], subLabel: null as string | null },
                 { key: 'power', label: 'Power', value: liveReading.power, unit: 'W', decimals: 1, requires: ['power'], subLabel: null as string | null },

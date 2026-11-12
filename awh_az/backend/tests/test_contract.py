@@ -287,3 +287,20 @@ def test_energy_per_litre_by_flow_is_a_gap_without_a_flow_meter(client, use_fire
     use_firestore({"x": {"readings": rs, "meta": {}}})
     rows = client.get("/stations/x/hourly").json()["data"]
     assert all(r["energy_per_liter_flow_kWh_L"] is None for r in rows)
+
+
+def test_idle_draw_below_the_off_floor_is_in_total_energy_but_not_energy_per_litre(client, use_firestore):
+    main.cache.delete_pattern("hourly:*")
+    use_firestore({"x": {"readings": _counting_readings(180, 0, 100.0, kw=0.15), "meta": {}}})   # 150 W idle, under the 0.2 kWh/h floor
+    rows = client.get("/stations/x/hourly").json()["data"]
+    mid = rows[1]
+    assert mid["energy_consumed_kWh"] is None                      # still treated as "off" for specific energy
+    assert mid["energy_total_kWh"] == pytest.approx(0.15, abs=0.02)
+    assert mid["energy_per_liter_kWh_L"] is None
+
+
+def test_total_energy_equals_floored_energy_when_the_station_is_running(client, use_firestore):
+    main.cache.delete_pattern("hourly:*")
+    use_firestore({"x": {"readings": _counting_readings(180, 0, 100.0, kw=0.8), "meta": {}}})
+    mid = client.get("/stations/x/hourly").json()["data"][1]
+    assert mid["energy_total_kWh"] == mid["energy_consumed_kWh"]

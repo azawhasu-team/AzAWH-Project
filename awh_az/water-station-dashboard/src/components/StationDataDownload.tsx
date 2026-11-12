@@ -416,6 +416,7 @@ export default function StationDataDownload({ station }: { station: StationInfo 
                   'Captured Water (g/hr)': row.water_captured_g_hourly,
                   'Harvesting Efficiency Hourly (%)': row.harvesting_efficiency_pct_hourly,
                   'Energy Consumed (kWh)': row.energy_consumed_kWh,
+                  'Total Energy incl. idle (kWh)': row.energy_total_kWh ?? row.energy_consumed_kWh,
                   [`Energy per ${UNIT_LABEL[volumeUnit]} (kWh/${UNIT_LABEL[volumeUnit]})`]:
                     row.energy_per_liter_kWh_L != null ? convertSpecificEnergy(row.energy_per_liter_kWh_L, volumeUnit) : row.energy_per_liter_kWh_L,
                   [`Energy per ${UNIT_LABEL[volumeUnit]}, Flow (kWh/${UNIT_LABEL[volumeUnit]})`]:
