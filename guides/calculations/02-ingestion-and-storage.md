@@ -68,8 +68,11 @@ for that station in that batch**; stations with no documents keep their old valu
 with the 17 sensor columns (`temperature … flow_total`); `ON CONFLICT (time,
 station_id) DO NOTHING`. Idempotency is therefore twofold: the checkpoint avoids
 re-fetching, and the primary key avoids duplicates if the checkpoint is stale.
-Missing fields become `NULL`. Fields not in the column list (e.g.
-`flow_samples_lmin`) are **not** copied to Postgres.
+Missing fields become `NULL`. Fields not in the column list are **not** copied to Postgres.
+Since 2026-11-13 the list includes `flow_samples_lmin` (`REAL[]`, the Pi's per-second flow rates); rows
+inserted before then were backfilled from Firestore for the testbed from 2026-10-28 with
+`scripts/backfill_flow_samples.py`. Older rows, and stations without the list, stay `NULL`.
+An existing database needs `ALTER TABLE measurements ADD COLUMN IF NOT EXISTS flow_samples_lmin REAL[];`.
 
 **Station registry:** `station_name → station_id` created on first sight
 (`ON CONFLICT (station_name) DO NOTHING`). Location = text after `@` in the

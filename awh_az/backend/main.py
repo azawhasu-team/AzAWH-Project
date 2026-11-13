@@ -262,6 +262,23 @@ def _firestore_doc_to_dict(doc_dict: dict) -> dict:
     return out
 
 
+def _flow_volume_from_samples(samples) -> Optional[float]:
+    """Litres from the Pi's per-second flow list (`flow_samples_lmin`): each entry
+    is the flow rate (L/min) over one second, so litres = sum(rate) / 60. Entries
+    that are not finite non-negative numbers are skipped. None when there is no
+    usable list (older readings, Postgres rows, stations without a flow meter),
+    so callers fall back to the upload-mean rate `flow_lmin`."""
+    if not isinstance(samples, (list, tuple)) or not samples:
+        return None
+    total = 0.0
+    used = 0
+    for s in samples:
+        if isinstance(s, (int, float)) and not isinstance(s, bool) and math.isfinite(s) and s >= 0:
+            total += s
+            used += 1
+    return total / 60.0 if used else None
+
+
 def _build_field_groups(available_fields: list[str]) -> dict[str, list[str]]:
     groups: dict[str, list[str]] = {}
     for f in available_fields:
@@ -528,7 +545,7 @@ def _fetch_readings_rows(
         params[f"ex_hi_{i}"] = whi
 
     query = f"""
-        SELECT time, {", ".join(READING_COLUMNS)}
+        SELECT time, {", ".join(READING_COLUMNS)}, flow_samples_lmin
         FROM measurements
         WHERE {" AND ".join(conditions)}
         ORDER BY time {order_dir}
@@ -695,8 +712,14 @@ async def get_station_readings(
             if val is not None and key not in SKIP_FIELDS:
                 available_fields.add(key)
 
+        # Litres in this reading's window from the per-second flow list, sent as one
+        # small number instead of the whole list. Absent on Postgres rows.
+        flow_volume_L = _flow_volume_from_samples(data.get("flow_samples_lmin"))
+
         if requested_fields:
             data = {k: v for k, v in data.items() if k in requested_fields}
+        if flow_volume_L is not None:
+            data["flow_volume_L"] = round(flow_volume_L, 6)
 
         readings_list.append(data)
 
@@ -954,7 +977,7 @@ def _compute_hourly_aggregation_sync(
             params["end_date"] = end_date
 
         query = f"""
-            SELECT time, {", ".join(READING_COLUMNS)}
+            SELECT time, {", ".join(READING_COLUMNS)}, flow_samples_lmin
             FROM measurements
             WHERE {" AND ".join(conditions)}
             ORDER BY time ASC
@@ -989,7 +1012,7 @@ def _compute_hourly_aggregation_sync(
             .document(station_name)
             .collection("readings")
             .order_by("timestamp", direction=firestore.Query.ASCENDING)
-            .select(["timestamp", *READING_COLUMNS])
+            .select(["timestamp", *READING_COLUMNS, "flow_samples_lmin"])
         )
         if start_date:
             readings_ref = readings_ref.where("timestamp", ">=", start_date)
@@ -1308,8 +1331,16 @@ def _compute_hourly_aggregation_sync(
         # instantaneous rate, so a long gap (offline / Pi restart) can't be
         # credited with continuous flow. Independent of the weight-based
         # water_produced_* fields so the two methods can be compared.
+        # Preferred: integrate every 1 s sample the Pi uploaded with this reading
+        # (`flow_samples_lmin`, covering the time since the previous upload), so a
+        # short burst is counted at its true size. Fallback when a reading has no
+        # per-second list: the trapezoid of the upload-mean rates described above.
         cur_f, prev_f = cur_r.get("flow_lmin"), prev_r.get("flow_lmin")
-        if isinstance(cur_f, (int, float)) and cur_f >= 0 and not cur_r.get("_after_exclusion"):
+        sample_L = _flow_volume_from_samples(cur_r.get("flow_samples_lmin"))
+        if sample_L is not None and not cur_r.get("_after_exclusion"):
+            flow_L_by_hour[hour_key] += sample_L
+            flow_seen_by_hour.add(hour_key)
+        elif isinstance(cur_f, (int, float)) and cur_f >= 0 and not cur_r.get("_after_exclusion"):
             f_avg = (cur_f + prev_f) / 2.0 if isinstance(prev_f, (int, float)) and prev_f >= 0 else cur_f
             flow_L_by_hour[hour_key] += f_avg * min(elapsed_s, 120.0) / 60.0
             flow_seen_by_hour.add(hour_key)

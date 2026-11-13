@@ -22,6 +22,8 @@ export interface StationReading {
   flow_lmin?: number | null;
   flow_hz?: number | null;
   flow_total?: number | null;
+  /** Litres in this reading's window, summed from the Pi's 1 s samples (absent when not available). */
+  flow_volume_L?: number | null;
   weight?: number | null;
   power?: number | null;
   voltage?: number | null;

@@ -169,6 +169,16 @@ Lower is better (typical running value on Testbed 1 ≈ 0.7 kWh/L).
 
 Field: `water_produced_flow_L`. Independent of the balance, so the two can be compared.
 
+**Preferred (since 2026-11-13): every 1 s sample.** If the reading carries the Pi's
+per-second list `flow_samples_lmin`, the reading's litres are `Σ max(sample,0) / 60`
+(each entry is the L/min over one second), credited to the hour of that reading. Both
+read paths select it (Firestore `.select`, and the Postgres `flow_samples_lmin REAL[]` column,
+02 §Postgres). Readings without a list (older rows, stations without the sensor) use the
+fallback below. On 5–10 Nov 2026 data the two methods
+differ by under 1 % per day (the dashboard's accumulated-flow chart uses the same
+rule via the per-reading field `flow_volume_L`).
+
+**Fallback (no per-second list):**
 ```
 for each reading i with flow_lmin ≥ 0 (a number) and not _after_exclusion:
     f_avg  = (flow_lmin_i + flow_lmin_{i−1})/2   if the previous reading also has a flow value ≥ 0

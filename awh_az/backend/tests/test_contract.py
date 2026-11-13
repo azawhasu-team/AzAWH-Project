@@ -167,6 +167,27 @@ def test_hourly_flow_volume_is_integrated_flow_rate(client, use_firestore):
     assert rows[1]["water_produced_flow_L"] == pytest.approx(72.0, rel=1e-3)
 
 
+def test_hourly_flow_volume_sums_every_one_second_sample(client, use_firestore):
+    # A 16 s burst at 4.5 L/min inside a 30-sample window, but the upload MEAN is
+    # only 2.4 L/min: the per-second list must be integrated, not the mean.
+    readings = hourly_readings()
+    burst = [4.5] * 16 + [0.0] * 14
+    for r in readings:
+        r["flow_lmin"] = round(sum(burst) / len(burst), 3)
+        r["flow_samples_lmin"] = list(burst)
+    use_firestore({"x": {"readings": readings, "meta": {}}})
+    rows = client.get("/stations/x/hourly").json()["data"]
+    per_reading = sum(burst) / 60.0          # 1.2 L per reading
+    assert rows[1]["water_produced_flow_L"] == pytest.approx(per_reading * rows[1]["reading_count"], rel=1e-3)
+
+
+def test_helper_flow_volume_from_samples():
+    from main import _flow_volume_from_samples as f
+    assert f([6.0] * 60) == pytest.approx(6.0)          # 6 L/min for 60 s = 6 L
+    assert f([1.0, None, -2.0, "x", 3.0]) == pytest.approx(4.0 / 60)
+    assert f([]) is None and f(None) is None and f([None]) is None
+
+
 def test_hourly_flow_volume_is_null_without_a_flow_meter(client, use_firestore):
     use_firestore({"x": {"readings": hourly_readings(), "meta": {}}})
     rows = client.get("/stations/x/hourly").json()["data"]

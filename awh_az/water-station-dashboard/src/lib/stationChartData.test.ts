@@ -35,6 +35,24 @@ describe('buildParameterCategories', () => {
   });
 });
 
+describe('accumulated flow from per-second samples', () => {
+  it('uses flow_volume_L when present and the trapezoid otherwise', () => {
+    const rs = [
+      reading(0, { flow_lmin: 2 }),
+      reading(30, { flow_lmin: 2, flow_volume_L: 1.0 }), // burst-heavy window: mean would give 1.0 too, sample list says 1.0
+      reading(60, { flow_lmin: 2 }),                      // no list: trapezoid 2 L/min * 30 s = 1.0 L
+    ];
+    const [series] = buildChartSeries(rs, ...window, ['accumulated_water_flow_L']);
+    expect(series.data.map(d => d.value)).toEqual([0, 1, 2]);
+  });
+
+  it('counts a short burst at its true size, not the upload mean', () => {
+    const rs = [reading(0, { flow_lmin: 0 }), reading(30, { flow_lmin: 0.1, flow_volume_L: 1.2 })];
+    const [series] = buildChartSeries(rs, ...window, ['accumulated_water_flow_L']);
+    expect(series.data[1].value).toBeCloseTo(1.2, 6);
+  });
+});
+
 describe('buildChartSeries', () => {
   it('returns nothing without a range, parameters or readings', () => {
     const r = [reading(0, { temperature: 20 })];

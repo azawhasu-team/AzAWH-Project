@@ -83,8 +83,8 @@ every 1 s:
 - **What is uploaded each cycle** (`save_data`): `flow_lmin` = **mean** of all 1 s
   samples since the last upload; `flow_hz` = mean Hz; `flow_total` = current
   integrated total; `flow_samples_lmin` = the list of every 1 s value (capped at
-  3600). The backend's hourly water-from-flow uses only the mean `flow_lmin`; the
-  per-second list is stored for diagnostics.
+  3600). Since 2026-11-13 the backend's hourly water-from-flow sums every 1 s value in
+  that list (falling back to the mean `flow_lmin` when a reading has no list).
 - If no flow data has ever arrived, fields are `None` (not 0).
 
 ## 5. Power meter (DEM730P, `read_power_new.py`)

@@ -61,7 +61,7 @@ in the selected range are sorted ascending, then:
 |---|---|
 | `accumulated_water_L` | running sum of `Δweight` where `Δweight ≥ 25 g` (**flat** floor, no cap), ÷ 1000. Replaces raw weight in the selector |
 | `incremental_water_g` | per-reading `Δweight` if ≥ 25 g else 0 |
-| `accumulated_water_flow_L` | running ∫ flow: trapezoid `((f_prev + f)/2) · min(Δt,120 s)/60`, only for `flow_lmin ≥ 0`. Replaces raw `flow_total` (which resets on Pi restart) |
+| `accumulated_water_flow_L` | running sum of the backend's per-reading `flow_volume_L` (every 1 s sample) when present; otherwise running ∫ flow: trapezoid `((f_prev + f)/2) · min(Δt,120 s)/60`, only for `flow_lmin ≥ 0`. Replaces raw `flow_total` (which resets on Pi restart) |
 | `energy` (cumulative) | jump-adjusted counter (§4); readings above `ENERGY_SANITY_CEILING_KWH` = 50 000 are treated as missing; on a station that normally reports power, a reading with no power is treated as missing energy |
 | `incremental_energy_kWh` | jump-aware per-reading increment |
 | `abs_humidity_intake/outtake` | Magnus formula (same as backend) from T and RH |

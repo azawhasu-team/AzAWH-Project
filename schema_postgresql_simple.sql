@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS measurements (
     flow_lmin DOUBLE PRECISION,
     flow_hz DOUBLE PRECISION,
     flow_total DOUBLE PRECISION,
+    -- Per-second flow rates (L/min) the Pi uploads with each reading (NULL on older rows)
+    flow_samples_lmin REAL[],
     
     -- Metadata
     created_at TIMESTAMPTZ DEFAULT NOW()

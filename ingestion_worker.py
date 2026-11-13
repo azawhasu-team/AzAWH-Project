@@ -389,7 +389,8 @@ class MeasurementInserter:
                             doc.get('current'),
                             doc.get('flow_lmin'),
                             doc.get('flow_hz'),
-                            doc.get('flow_total')
+                            doc.get('flow_total'),
+                            _flow_samples(doc.get('flow_samples_lmin'))
                         )
                         rows.append(row)
 
@@ -408,7 +409,7 @@ class MeasurementInserter:
                             outtake_temperature, outtake_humidity, outtake_velocity, outtake_unit,
                             weight, pump_status,
                             voltage, power, energy, current,
-                            flow_lmin, flow_hz, flow_total
+                            flow_lmin, flow_hz, flow_total, flow_samples_lmin
                         ) VALUES %s
                         ON CONFLICT (time, station_id) DO NOTHING
                         """,
@@ -426,6 +427,14 @@ class MeasurementInserter:
             self.conn.rollback()
             logger.error(f"Batch insert failed: {e}")
             raise
+
+
+def _flow_samples(v):
+    """Per-second flow list for the REAL[] column: numbers only, None if absent."""
+    if not isinstance(v, (list, tuple)):
+        return None
+    out = [float(x) for x in v if isinstance(x, (int, float)) and not isinstance(x, bool)]
+    return out or None
 
 
 # ============================================

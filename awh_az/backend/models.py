@@ -27,6 +27,7 @@ class StationReading(BaseModel):
     flow_lmin: Optional[float] = None
     flow_hz: Optional[float] = None
     flow_total: Optional[float] = None
+    flow_volume_L: Optional[float] = None  # litres in this reading's window, summed from the 1 s samples
     weight: Optional[float] = None
     
     # Power Parameters

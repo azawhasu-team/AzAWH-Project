@@ -94,7 +94,14 @@ export function buildChartSeries(
   filteredReadings.forEach(r => {
     const f = typeof r.flow_lmin === 'number' && r.flow_lmin >= 0 ? r.flow_lmin : null;
     const t = new Date(r.timestamp).getTime();
-    if (f !== null) {
+    // Preferred: the litres summed from every 1 s sample in this reading's window
+    // (backend `flow_volume_L`). The first reading only sets the starting point, as
+    // with the trapezoid below. Readings without it fall back to the trapezoid.
+    const sampleL = typeof r.flow_volume_L === 'number' && r.flow_volume_L >= 0 ? r.flow_volume_L : null;
+    if (sampleL !== null && f !== null && prevFlow !== null) {
+      runningFlowL += sampleL;
+      prevFlow = { t, v: f };
+    } else if (f !== null) {
       if (prevFlow !== null) {
         const dtS = Math.min((t - prevFlow.t) / 1000, 120);
         if (dtS > 0) runningFlowL += ((prevFlow.v + f) / 2) * dtS / 60;

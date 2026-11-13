@@ -51,7 +51,9 @@ CREATE TABLE IF NOT EXISTS measurements (
     -- Flow metrics
     flow_lmin DOUBLE PRECISION,
     flow_hz DOUBLE PRECISION,
-    flow_total DOUBLE PRECISION
+    flow_total DOUBLE PRECISION,
+    -- Per-second flow rates (L/min) the Pi uploads with each reading (NULL on older rows)
+    flow_samples_lmin REAL[]
 );
 
 -- Create unique constraint for idempotency
