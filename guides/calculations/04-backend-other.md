@@ -1,5 +1,7 @@
 # 04 — Backend: everything except `/hourly`
 
+> **In plain words:** everything the backend does besides the hourly table: the daily data-quality score, daily energy per litre, the alert rules that email the team, weather flags, and how a station is judged online or offline. Unfamiliar word? See the [glossary](GLOSSARY.md).
+
 Files: `quality.py`, `efficiency.py`, `alerting.py`, `weather.py`, `calibrations.py`,
 and endpoints in `main.py`. All of these take the **hourly rows** from
 [03](03-backend-hourly.md) as input. Pure functions (no I/O) are marked ◆.

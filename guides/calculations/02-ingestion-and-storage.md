@@ -1,5 +1,7 @@
 # 02 — Ingestion and storage: timestamps, dedup, checkpoints, lifetime totals
 
+> **In plain words:** how a reading travels from the Pi into storage. A cloud function receives it and stamps the time, Firestore keeps every raw reading, and a worker copies them into a Postgres database that is faster to search. Unfamiliar word? See the [glossary](GLOSSARY.md).
+
 No sensor maths happens here; these rules decide **which readings exist and what
 time they carry**, which every later calculation depends on.
 
@@ -41,8 +43,8 @@ no control characters, not `.`/`..`/`__x__`.
 
 ## 2. Firestore → PostgreSQL worker (`ingestion_worker.py`)
 
-A launchd service on the lab machine. Postgres is used by the **local** backend
-and by research code; the **production** backend (Render) has no Postgres and reads
+A launchd service on the lab machine. Postgres is used by the **local** backend;
+the **production** backend (Render) has no Postgres and reads
 Firestore directly (see CLAUDE.md §7).
 
 | Parameter | Default | Meaning |

@@ -1,5 +1,7 @@
 # 03 — Backend hourly aggregation (`GET /stations/{station}/hourly`)
 
+> **In plain words:** the most important file. It explains how the website's hourly numbers (water, energy, energy per litre, efficiency) are worked out from the raw readings. The key idea: every number is the difference between two consecutive readings, added up for each hour. Start with [00-START-HERE.md](00-START-HERE.md) if you are new. Unfamiliar word? See the [glossary](GLOSSARY.md).
+
 **This is the core of the analytics.** Implemented in
 `awh_az/backend/main.py::_compute_hourly_aggregation_sync` (≈ lines 920–1500).
 Everything the dashboard shows as "water produced", "energy consumed",

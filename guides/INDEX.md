@@ -10,7 +10,7 @@ This index helps you navigate all project documentation and code.
 
 **New to the project?** Start here:
 
-0. **[calculations/README.md](calculations/README.md)** - **How every number is calculated** (read this before changing any maths)
+0. **[calculations/00-START-HERE.md](calculations/00-START-HERE.md)** - **Plain-words overview, no formulas** (start here if you are new), with a [glossary](calculations/GLOSSARY.md); then **[calculations/README.md](calculations/README.md)** - how every number is calculated (read this before changing any maths)
 1. **[STATUS_REPORT.md](STATUS_REPORT.md)** - System overview and readiness status
 2. **[INGESTION_README.md](INGESTION_README.md)** - Cloud ingestion user guide
 3. **[UI_GUIDE.md](UI_GUIDE.md)** - Tkinter control panel guide
@@ -20,7 +20,7 @@ This index helps you navigate all project documentation and code.
 ## 📚 Documentation by Purpose
 
 ### For Developers
-- **[calculations/](calculations/README.md)** - Every calculation, formula, constant and known inconsistency, layer by layer (edge, ingestion, backend, dashboard, research)
+- **[calculations/](calculations/README.md)** - Every calculation, formula, constant and known inconsistency, layer by layer (edge, ingestion, backend, dashboard)
 - **[INGESTION_README.md](INGESTION_README.md)** - User guide and architecture
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - System design with diagrams
 - **[UI_GUIDE.md](UI_GUIDE.md)** - Full UI usage guide

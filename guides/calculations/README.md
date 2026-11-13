@@ -1,5 +1,7 @@
 # How every number in AzAWH is calculated
 
+> **New here, or not an engineer?** Read [00-START-HERE.md](00-START-HERE.md) first (plain words, no formulas), and keep the [glossary](GLOSSARY.md) open. This README is the technical index.
+
 **Read this first if you are taking over the project.** This folder explains, in
 order, every calculation the system performs: from a voltage on a sensor wire to
 the figure on a dashboard tile. Each rule is written with its formula, its
@@ -23,7 +25,6 @@ of truth; if you change a constant or rule, change it here too.
                                                                        ▼
                                           Dashboard: tiles, charts, compare, envelope, alerts
                                                                        (05-dashboard)
- research_extension/: windows, synthetic faults, models, agents       (06-research-extension)
 ```
 
 | File | Covers |
@@ -33,7 +34,6 @@ of truth; if you change a constant or rule, change it here too.
 | [03-backend-hourly.md](03-backend-hourly.md) | **The core.** `/hourly`: water, energy, flow, energy per litre, harvesting efficiency, absolute humidity |
 | [04-backend-other.md](04-backend-other.md) | Data-quality score, daily kWh/L, alert rules and state machine, weather flags, station status, health digest |
 | [05-dashboard.md](05-dashboard.md) | Everything the dashboard recomputes: period totals, per-reading charts, compare, envelope, power status, unit conversion |
-| [06-research-extension.md](06-research-extension.md) | Phase 1–3: sliding-window features, baseline-relative stats, fault injection, labels, models, metrics, agents |
 
 ## Conventions used everywhere
 

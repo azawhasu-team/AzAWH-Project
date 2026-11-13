@@ -1,5 +1,7 @@
 # 05 — Dashboard (`awh_az/water-station-dashboard/src`)
 
+> **In plain words:** what the website recalculates itself in your browser: the totals on a station page, the charts built from raw readings, the compare page and the on/off indicator. Everything else on the site comes ready-made from the backend. Unfamiliar word? See the [glossary](GLOSSARY.md).
+
 Most dashboard numbers are taken straight from the backend (`/hourly`,
 `/efficiency/daily`, `/impact`). The rules below are the ones the **browser
 recomputes**. Pure functions live in `src/lib/` and have unit tests next to them

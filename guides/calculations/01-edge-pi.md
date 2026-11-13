@@ -1,5 +1,7 @@
 # 01 — Edge layer (Raspberry Pi): turning sensor signals into numbers
 
+> **In plain words:** this is the code on the small computer (a Raspberry Pi) next to the machine. It reads each sensor, turns the raw signal into a normal number (degrees, grams, litres per minute), decides when to run the pump, and sends everything to the cloud. Unfamiliar word? See the [glossary](GLOSSARY.md).
+
 Code: `RPi_USB_Package/`. The live station (`station_testbed_1@Powerplant`) runs
 `AquaPars1_new_pm.py`; the older variant `AquaPars1.py` differs only in the power
 meter reader. See also [Hardware notes in CLAUDE.md §6](../../CLAUDE.md).
