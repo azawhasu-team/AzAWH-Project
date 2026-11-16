@@ -19,7 +19,7 @@ EXPECTED_FIELDS = {
     "temperature", "humidity", "velocity", "unit",
     "outtake_temperature", "outtake_humidity", "outtake_velocity", "outtake_unit",
     "voltage", "current", "power", "energy", "weight", "pump_status",
-    "flow_lmin", "flow_hz", "flow_total",
+    "flow_lmin", "flow_hz", "flow_total", "flow_samples_lmin",
 }
 
 
