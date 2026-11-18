@@ -40,3 +40,10 @@ Thumbs.db
 **/station_key
 **/logs/
 *.sqlite3
+
+# Local artifacts
+*.db
+mlruns/
+export.csv
+.pytest_cache/
+.ruff_cache/

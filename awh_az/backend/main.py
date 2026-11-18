@@ -358,6 +358,10 @@ async def lifespan(app: FastAPI):
 # With a key configured the interactive docs / schema (which list every route)
 # are switched off too; otherwise they stay available for local development.
 _private = bool(settings.api_key)
+# Fail closed on Render (it always sets RENDER=true): a dropped API_KEY env var
+# must stop the deploy, not silently make every data endpoint public.
+if not _private and os.getenv("RENDER"):
+    raise RuntimeError("API_KEY must be set in production (RENDER detected) - refusing to start with an open API")
 if not _private:
     logging.getLogger(__name__).warning(
         "API_KEY is not set: data endpoints are publicly readable. Set API_KEY (and the "
